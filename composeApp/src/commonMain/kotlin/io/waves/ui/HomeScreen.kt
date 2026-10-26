@@ -145,7 +145,7 @@ private fun ShowShelf(shows: List<Podcast>, onOpenPodcast: (Podcast) -> Unit, mo
     Column(modifier) {
         LazyRow(
             modifier = Modifier.horizontalScrollRegion(),
-            contentPadding = PaddingValues(horizontal = ScreenGutter),
+            contentPadding = PaddingValues(horizontal = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             items(shows, key = { it.feedUrl }) { podcast ->
