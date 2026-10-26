@@ -8,6 +8,9 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.PointerEvent
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
@@ -15,6 +18,7 @@ import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -52,7 +56,10 @@ internal class HorizontalScrollRegions {
 
 internal val LocalHorizontalScrollRegions = staticCompositionLocalOf<HorizontalScrollRegions?> { null }
 
-/** Marks horizontally scrollable content (e.g. a shelf) so [wheelPaging] lets it scroll before turning the page. */
+/**
+ * Marks horizontally scrollable content (e.g. a shelf) so [wheelPaging] lets it scroll before turning the page, and
+ * keeps the horizontal drag and fling it can't use (past either end) from reaching the pager.
+ */
 internal fun Modifier.horizontalScrollRegion(): Modifier = composed {
     val regions = LocalHorizontalScrollRegions.current
     val holder = remember { HorizontalScrollRegions.Holder() }
@@ -60,7 +67,13 @@ internal fun Modifier.horizontalScrollRegion(): Modifier = composed {
         regions?.nodes?.add(holder)
         onDispose { regions?.nodes?.remove(holder) }
     }
-    onGloballyPositioned { holder.coordinates = it }
+    onGloballyPositioned { holder.coordinates = it }.nestedScroll(KeepHorizontalLeftover)
+}
+
+private object KeepHorizontalLeftover : NestedScrollConnection {
+    override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource) = Offset(available.x, 0f)
+
+    override suspend fun onPostFling(consumed: Velocity, available: Velocity) = Velocity(available.x, 0f)
 }
 
 /**
