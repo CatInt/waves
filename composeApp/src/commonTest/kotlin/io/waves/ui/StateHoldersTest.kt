@@ -23,6 +23,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
 import kotlin.test.Test
+import kotlin.time.Duration.Companion.minutes
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
@@ -153,6 +154,25 @@ class PodcastDetailStateTest {
         PodcastDetailState(podcastA, feeds, library, RecordingDirectory(emptyList()), backgroundScope, autoFetch = false)
         settle()
         assertTrue(feeds.fetched.isEmpty())
+    }
+
+    @Test
+    fun reopeningARecentlyFetchedShowDoesNotFetchAgain() = runTest {
+        var now = 0L
+        val recent = RecentFetches(freshFor = 60.minutes, clock = { now })
+        val open = { PodcastDetailState(podcastA, feeds, library, RecordingDirectory(emptyList()), backgroundScope, autoFetch = true, recentFetches = recent) }
+        open()
+        settle()
+        now += 59.minutes.inWholeMilliseconds
+        val reopened = open()
+        settle()
+        assertEquals(1, feeds.fetched.size)
+        assertFalse(reopened.state.value.refreshing)
+        assertEquals(2, reopened.state.value.episodes.size)
+        now += 2.minutes.inWholeMilliseconds
+        open()
+        settle()
+        assertEquals(2, feeds.fetched.size)
     }
 
     @Test

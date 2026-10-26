@@ -1,5 +1,8 @@
 package io.waves.ui
 
+import io.waves.currentTimeMillis
+import io.waves.data.FeedFetchLog
+import io.waves.data.InMemoryFeedFetchLog
 import io.waves.data.LibraryRepository
 import io.waves.feed.FeedRepository
 import io.waves.model.Episode
@@ -23,6 +26,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.hours
 
 data class EpisodeRow(
     val episode: Episode,
@@ -43,7 +48,8 @@ data class PodcastDetailUiState(
 
 /**
  * Podcast page. Refresh = [FeedRepository.fetch] then [LibraryRepository.upsertEpisodes].
- * When [autoFetch] is true (opened from search/charts) or the library has no episodes yet, refreshes on open.
+ * When [autoFetch] is true (opened from search/charts) or the library has no episodes yet, refreshes on open, unless
+ * [recentFetches] shows the feed was fetched moments ago and its episodes are stored.
  * Chart entries without a feed URL are first resolved via [PodcastDirectory.lookup].
  */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -59,6 +65,7 @@ class PodcastDetailState(
     private val offline: StateFlow<Boolean> = MutableStateFlow(false),
     /** Null lists every episode; a set (while offline) lists only those that can play without a connection. */
     private val playable: Flow<Set<EpisodeId>?> = flowOf(null),
+    private val recentFetches: RecentFetches = RecentFetches(),
 ) {
     private val podcast = MutableStateFlow(initial)
     private val refreshing = MutableStateFlow(false)
@@ -101,7 +108,7 @@ class PodcastDetailState(
             // Opened from the player or History the podcast may be just a title; the stored row fills the rest.
             library.podcast(url)?.let { stored -> podcast.update { mergePodcast(stored, it) } }
             library.rememberPodcast(podcast.value)
-            if (autoFetch || library.episodes(url).first().isEmpty()) refresh()
+            if ((autoFetch && !recentFetches.isFresh(url)) || library.episodes(url).first().isEmpty()) refresh()
         }
     }
 
@@ -137,6 +144,7 @@ class PodcastDetailState(
         try {
             val known = library.episodes(url).first().mapTo(HashSet()) { it.guid }
             val feed = feeds.fetch(url)
+            recentFetches.record(url)
             podcast.update { mergePodcast(it, feed.podcast) }
             fetched.value = feed.episodes
             library.upsertEpisodes(url, feed.episodes)
@@ -169,6 +177,18 @@ class PodcastDetailState(
     }
 
     fun clearError() { error.value = null }
+}
+
+/** Whether a show page fetched a feed within [freshFor], so reopening the show soon after doesn't fetch it again. */
+class RecentFetches(
+    private val log: FeedFetchLog = InMemoryFeedFetchLog(),
+    private val freshFor: Duration = 1.hours,
+    private val clock: () -> Long = ::currentTimeMillis,
+) {
+    suspend fun isFresh(feedUrl: String): Boolean =
+        log.fetchedAt(feedUrl)?.let { clock() - it in 0 until freshFor.inWholeMilliseconds } == true
+
+    suspend fun record(feedUrl: String) = log.record(feedUrl, clock())
 }
 
 /** Keep the original feed URL; prefer fresh feed metadata while keeping directory-only fields (apple id, artwork) when the feed lacks them. */
