@@ -54,7 +54,7 @@ class SchemaMigrationTest {
             .map { it.replace(Regex("\\s+"), " ").replace("IF NOT EXISTS ", "").trim() }
 
     @Test fun schemaVersionMatchesSnapshots() {
-        assertEquals(4L, WavesDatabase.Schema.version)
+        assertEquals(5L, WavesDatabase.Schema.version)
         // Every released version needs a snapshot so verifySqlDelightMigration can check its upgrade path.
         for (v in 1..WavesDatabase.Schema.version) assertTrue(File(snapshots, "$v.db").isFile, "missing $v.db")
     }

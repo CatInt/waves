@@ -7,6 +7,7 @@ import io.ktor.client.plugins.cache.HttpCache
 import io.ktor.client.plugins.cache.storage.CacheStorage
 import io.waves.data.SettingsStore
 import io.waves.data.SqlArtworkColorStore
+import io.waves.data.SqlFeedFetchLog
 import io.waves.data.SqlLibraryRepository
 import io.waves.data.SqlPlaybackSessionStore
 import io.waves.data.SqlDirectoryCacheStore
@@ -152,6 +153,7 @@ class AppGraph(
                 settings = settings,
                 playbackSession = SqlPlaybackSessionStore(library.driver),
                 artworkColors = SqlArtworkColorStore(library.driver),
+                feedFetches = SqlFeedFetchLog(library.driver),
                 releases = updateInstaller?.let { GitHubReleases(http) },
                 updateInstaller = updateInstaller,
                 playbackCache = playbackCache,

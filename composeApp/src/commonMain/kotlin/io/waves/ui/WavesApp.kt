@@ -100,6 +100,7 @@ class AppState(deps: AppDependencies, scope: kotlinx.coroutines.CoroutineScope) 
         onEpisodesAbsent = deps.onEpisodesAbsent,
     )
     val history = HistoryState(deps.library, scope)
+    val recentFetches = RecentFetches(deps.feedFetches)
     /** Null while online. While offline: the episodes that can play without a connection. */
     val offlinePlayable: StateFlow<Set<EpisodeId>?> = combine(
         deps.offline,
@@ -312,6 +313,7 @@ private fun CurrentScreen(
                         onEpisodesAbsent = deps.onEpisodesAbsent,
                         offline = deps.offline,
                         playable = app.offlinePlayable,
+                        recentFetches = app.recentFetches,
                     )
                 }
                 PodcastScreen(

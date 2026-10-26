@@ -1,7 +1,9 @@
 package io.waves.ui
 
 import io.waves.data.ArtworkColorStore
+import io.waves.data.FeedFetchLog
 import io.waves.data.InMemoryArtworkColorStore
+import io.waves.data.InMemoryFeedFetchLog
 import io.waves.data.LibraryRepository
 import io.waves.data.PlaybackSessionStore
 import io.waves.data.SettingsStore
@@ -66,6 +68,8 @@ class AppDependencies(
     val offline: StateFlow<Boolean> = MutableStateFlow(false),
     /** Colours picked from cover art. In memory by default. */
     val artworkColors: ArtworkColorStore = InMemoryArtworkColorStore(),
+    /** When show pages last fetched each feed. In memory by default. */
+    val feedFetches: FeedFetchLog = InMemoryFeedFetchLog(),
 )
 
 internal fun looksLikeApplePodcastsUrl(text: String): Boolean =

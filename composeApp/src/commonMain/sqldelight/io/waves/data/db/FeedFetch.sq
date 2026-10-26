@@ -1,0 +1,12 @@
+-- When a show page last fetched each feed (epoch ms), so reopening the show soon after doesn't fetch it again;
+-- local only.
+CREATE TABLE feed_fetch (
+    feed_url TEXT NOT NULL PRIMARY KEY,
+    fetched_at INTEGER NOT NULL
+);
+
+fetchedAt:
+SELECT fetched_at FROM feed_fetch WHERE feed_url = ?;
+
+put:
+INSERT OR REPLACE INTO feed_fetch(feed_url, fetched_at) VALUES (?, ?);
