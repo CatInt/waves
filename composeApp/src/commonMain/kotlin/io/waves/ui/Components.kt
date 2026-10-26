@@ -8,8 +8,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -20,6 +23,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
+import coil3.compose.LocalPlatformContext
+import coil3.memory.MemoryCache
+import coil3.request.ImageRequest
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -60,6 +66,8 @@ fun Artwork(
     size: Dp? = null,
     corner: Dp = 8.dp,
     alignment: Alignment = Alignment.Center,
+    placeholderKey: MemoryCache.Key? = null,
+    onLoaded: ((MemoryCache.Key?) -> Unit)? = null,
 ) {
     val sized = if (size != null) modifier.size(size) else modifier
     Box(
@@ -78,12 +86,22 @@ fun Artwork(
             },
         )
         if (!url.isNullOrBlank()) {
+            val context = LocalPlatformContext.current
+            // A new request starts empty, even when cached, so it stands on the last image shown (or [placeholderKey]).
+            var shown by remember { mutableStateOf<MemoryCache.Key?>(null) }
+            val request = remember(context, url, placeholderKey) {
+                ImageRequest.Builder(context).data(url).placeholderMemoryCacheKey(shown ?: placeholderKey).build()
+            }
             AsyncImage(
-                model = url,
+                model = request,
                 contentDescription = title,
                 contentScale = ContentScale.Crop,
                 alignment = alignment,
                 modifier = Modifier.fillMaxSize(),
+                onSuccess = {
+                    shown = it.result.memoryCacheKey
+                    onLoaded?.invoke(it.result.memoryCacheKey)
+                },
             )
         }
     }
