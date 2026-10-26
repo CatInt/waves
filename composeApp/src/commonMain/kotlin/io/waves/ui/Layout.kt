@@ -98,7 +98,7 @@ fun WavesTopBar(
             if (titleContent != null) {
                 titleContent()
             } else if (tabPage != null) {
-                // The title slot starts 16 dp in; the strip lines up with the show page's Back button, 12 dp in.
+                // The strip is centred on the screen within this slot; the title slot starts 16 dp in, the slot 12 dp.
                 Box(Modifier.offset(x = (-4).dp).padding(end = 8.dp)) { TabStripPlaceholder(tabPage) }
             } else {
                 Row(
