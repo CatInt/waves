@@ -1,5 +1,15 @@
 package io.waves.ui
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.EnterExitState
+import androidx.compose.animation.core.updateTransition
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.offset
@@ -11,26 +21,33 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.dp
 import io.waves.data.ArtworkColorStore
@@ -162,6 +179,7 @@ fun WavesApp(deps: AppDependencies, app: AppState = remember(deps) { AppState(de
             // Tab roots live in a pager: swiping pages switches tabs, and the navigator stays the source of truth.
             val pager = rememberPagerState(initialPage = nav.currentTab.ordinal) { Tab.entries.size }
             val stripSlot = remember { TabStripSlot() }
+            val coverOrigins = remember { CoverOrigins() }
             val atRoot = nav.content is Screen.Root
             val homeShown = atRoot && nav.currentTab == Tab.Home
             // Re-sort Home once it is off screen (after the transition away), never while it is visible.
@@ -188,6 +206,7 @@ fun WavesApp(deps: AppDependencies, app: AppState = remember(deps) { AppState(de
                     LocalBottomClearance provides clearance,
                     LocalPlayerColors provides playerColors,
                     LocalIsLandscapeLayout provides isLandscape,
+                    LocalCoverOrigins provides coverOrigins,
                 ) {
                     val hiddenByPlayer = if (expanded) Modifier.clearAndSetSemantics {} else Modifier
                     CurrentScreen(
@@ -195,29 +214,6 @@ fun WavesApp(deps: AppDependencies, app: AppState = remember(deps) { AppState(de
                         Modifier.fillMaxSize().nestedScroll(barScroll).then(hiddenByPlayer),
                         openPodcast, playFromHistory,
                     )
-                    val stripWidth = stripSlot.widths[nav.currentTab]
-                    if (atRoot && stripWidth != null) {
-                        val offline by deps.offline.collectAsState()
-                        TabStrip(
-                            position = pager.currentPage + pager.currentPageOffsetFraction,
-                            onSelect = nav::select,
-                            offline = offline,
-                            // Centred on the screen, but kept within the slot so it never runs under the bar's actions.
-                            modifier = Modifier
-                                .offset { IntOffset(0, stripSlot.offset.y) }
-                                .layout { measurable, constraints ->
-                                    val placeable = measurable.measure(
-                                        constraints.copy(minWidth = 0, maxWidth = minOf(stripWidth, constraints.maxWidth)),
-                                    )
-                                    layout(constraints.maxWidth, placeable.height) {
-                                        val left = stripSlot.offset.x
-                                        val centred = (constraints.maxWidth - placeable.width) / 2
-                                        placeable.place(centred.coerceIn(left, maxOf(left, left + stripWidth - placeable.width)), 0)
-                                    }
-                                }
-                                .then(hiddenByPlayer),
-                        )
-                    }
                     PlayerSheet(
                         controller = app.playback,
                         expanded = expanded,
@@ -253,9 +249,22 @@ private fun CurrentScreen(
     val playback by app.playback.state.collectAsState()
     val scope = rememberCoroutineScope()
     val scrollRegions = remember { HorizontalScrollRegions() }
-    Column(modifier) {
-        when (val screen = nav.content) {
-            is Screen.Root -> HorizontalPager(
+    val origins = LocalCoverOrigins.current
+    val shown = Shown(nav.content, nav.backStack.count { it != Screen.NowPlaying } - 1)
+    val screens = updateTransition(shown, label = "screen")
+    // The tabs stay composed under the screens opened on top of them, so closing one has nothing to rebuild while its
+    // cover flies home; they are only left undrawn while fully covered.
+    val covered = screens.currentState.screen !is Screen.Root && screens.targetState.screen !is Screen.Root
+    val density = LocalDensity.current
+    val statusBarTop = WindowInsets.statusBars.getTop(density)
+    var width by remember { mutableIntStateOf(0) }
+    Box(modifier.onSizeChanged { width = it.width }) {
+        Box(
+            Modifier.fillMaxSize()
+                .graphicsLayer { alpha = if (covered) 0f else 1f }
+                .then(if (covered) Modifier.clearAndSetSemantics {} else Modifier),
+        ) {
+            HorizontalPager(
                 state = pager,
                 modifier = Modifier.fillMaxSize()
                     .then(if (wheelPagesTabs) Modifier.wheelPaging(pager, scope, scrollRegions) else Modifier),
@@ -300,7 +309,56 @@ private fun CurrentScreen(
                     }
                 }
             }
+            // One strip over the pages, so it stays put as they swipe; beneath any screen opened on top of them.
+            RootTabStrip(nav, pager, stripSlot, deps.offline)
+        }
+        screens.AnimatedContent(
+            // A screen on top takes every touch, even where it shows nothing, so none reach the tabs beneath it.
+            modifier = Modifier.fillMaxSize().then(if (shown.screen is Screen.Root) Modifier else Modifier.pointerInput(Unit) {}),
+            // Tab changes are the pager's to animate.
+            contentKey = { if (it.screen is Screen.Root) Screen.Root::class else it },
+            // The screen beneath stays as it is: a show page grows out of it and shrinks back into it on top.
+            transitionSpec = {
+                (EnterTransition.None togetherWith ExitTransition.KeepUntilTransitionsFinished)
+                    .apply { targetContentZIndex = targetState.depth.toFloat() }
+                    .using(null)
+            },
+        ) { (screen) -> when (screen) {
+            is Screen.Root -> Unit
             is Screen.PodcastDetail -> {
+                val origin = remember(screen) { origins.take(screen.podcast.feedUrl) }
+                DisposableEffect(origin) { onDispose { origins.landed(origin) } }
+                val rest = with(density) { heroCoverRest(width, statusBarTop) }
+                // All 0 while the page is shut (not yet open, or closed again) and 1 once open: the background's fade,
+                // the same for every show; the cover's flight out of its tile, timed by how far it goes; and the fade
+                // of everything else, which follows the background and the cover in and, on the way out, is gone
+                // before the background.
+                val entry by transition.animateFloat(
+                    transitionSpec = {
+                        if (targetState == EnterExitState.Visible) tween(BackdropEnterMillis, easing = ScreenTransitionEasing)
+                        else tween(BackdropExitMillis, easing = ScreenTransitionEasing)
+                    },
+                    label = "entry",
+                ) { if (it == EnterExitState.Visible) 1f else 0f }
+                val flight by transition.animateFloat(
+                    transitionSpec = {
+                        val closing = targetState != EnterExitState.Visible
+                        val millis = origin?.let { with(density) { coverFlightMillis(it.bounds, rest, closing) } }
+                        tween(millis ?: BackdropEnterMillis, easing = if (closing) CoverReturnEasing else ScreenTransitionEasing)
+                    },
+                    label = "flight",
+                ) { if (it == EnterExitState.Visible) 1f else 0f }
+                val content by transition.animateFloat(
+                    transitionSpec = {
+                        if (targetState == EnterExitState.Visible) {
+                            val flightMillis = origin?.let { with(density) { coverFlightMillis(it.bounds, rest, closing = false) } }
+                            tween(ContentEnterMillis, delayMillis = contentEnterDelayMillis(flightMillis), easing = LinearOutSlowInEasing)
+                        } else {
+                            tween(ContentExitMillis, easing = FastOutLinearInEasing)
+                        }
+                    },
+                    label = "content",
+                ) { if (it == EnterExitState.Visible) 1f else 0f }
                 val detail = rememberHolder(screen) { scope ->
                     PodcastDetailState(
                         initial = screen.podcast,
@@ -344,9 +402,41 @@ private fun CurrentScreen(
                     } else {
                         { "Search podcasts by $it" }
                     },
+                    origin = origin,
+                    entry = { entry },
+                    flight = { flight },
+                    content = { content },
+                    onCoverShown = { origin?.let(origins::depart) },
                 )
             }
             Screen.NowPlaying -> Unit // drawn by PlayerSheet
-        }
+        } }
     }
 }
+
+@Composable
+private fun RootTabStrip(nav: Navigator, pager: PagerState, stripSlot: TabStripSlot, offline: StateFlow<Boolean>) {
+    val stripWidth = stripSlot.widths[nav.currentTab] ?: return
+    val isOffline by offline.collectAsState()
+    TabStrip(
+        position = pager.currentPage + pager.currentPageOffsetFraction,
+        onSelect = nav::select,
+        offline = isOffline,
+        // Centred on the screen, but kept within the slot so it never runs under the bar's actions.
+        modifier = Modifier
+            .offset { IntOffset(0, stripSlot.offset.y) }
+            .layout { measurable, constraints ->
+                val placeable = measurable.measure(
+                    constraints.copy(minWidth = 0, maxWidth = minOf(stripWidth, constraints.maxWidth)),
+                )
+                layout(constraints.maxWidth, placeable.height) {
+                    val left = stripSlot.offset.x
+                    val centred = (constraints.maxWidth - placeable.width) / 2
+                    placeable.place(centred.coerceIn(left, maxOf(left, left + stripWidth - placeable.width)), 0)
+                }
+            },
+    )
+}
+
+/** The screen beneath the player sheet and how deep in the back stack it sits, which puts newer screens on top. */
+private data class Shown(val screen: Screen, val depth: Int)

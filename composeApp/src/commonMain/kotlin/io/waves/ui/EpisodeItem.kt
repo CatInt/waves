@@ -104,13 +104,17 @@ fun EpisodeItem(
             ),
     ) {
         if (show != null) {
+            val anchor = rememberCoverAnchor(show.feedUrl, corner = 5.dp)
             Row(
                 Modifier.padding(end = 8.dp, bottom = 4.dp).then(
                     if (onOpenShow != null) {
                         Modifier.clickable(
                             interactionSource = null, indication = null,
-                            onClickLabel = "Open ${show.title}", onClick = onOpenShow,
-                        )
+                            onClickLabel = "Open ${show.title}",
+                        ) {
+                            anchor.mark()
+                            onOpenShow()
+                        }
                     } else {
                         Modifier
                     },
@@ -118,7 +122,10 @@ fun EpisodeItem(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(ListRowGap),
             ) {
-                Artwork(show.artworkUrl ?: episode.artworkUrl, show.title, size = 28.dp, corner = 5.dp)
+                Artwork(
+                    show.artworkUrl ?: episode.artworkUrl, show.title, anchor.modifier, size = 28.dp, corner = 5.dp,
+                    onLoaded = anchor.onLoaded,
+                )
                 Column {
                     Text(
                         show.title,

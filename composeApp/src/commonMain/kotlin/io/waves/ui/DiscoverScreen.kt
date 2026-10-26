@@ -78,13 +78,18 @@ private fun SearchResults(ui: DiscoverUiState, onOpenPodcast: (Podcast) -> Unit)
             modifier = Modifier.fillMaxSize().verticalFadingEdge(bottomFadeLength = floatingBarBottomGap()),
         ) {
             itemsIndexed(ui.results) { index, podcast ->
+                val anchor = rememberCoverAnchor(podcast.feedUrl, corner = 8.dp)
                 Row(
-                    Modifier.fillMaxWidth().topDivider(index > 0).clickable { onOpenPodcast(podcast) }
+                    Modifier.fillMaxWidth().topDivider(index > 0)
+                        .clickable {
+                            anchor.mark()
+                            onOpenPodcast(podcast)
+                        }
                         .padding(horizontal = ScreenGutter, vertical = ListRowVerticalPadding),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(ListRowGap),
                 ) {
-                    Artwork(podcast.artworkUrl, podcast.title, size = 48.dp)
+                    Artwork(podcast.artworkUrl, podcast.title, anchor.modifier, size = 48.dp, onLoaded = anchor.onLoaded)
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(podcast.title, style = listTitleStyle(), maxLines = 2, overflow = TextOverflow.Ellipsis)
                         podcast.author?.let { MetaText(it) }
@@ -124,8 +129,17 @@ fun PodcastGrid(
         modifier = modifier.fillMaxSize().verticalFadingEdge(bottomFadeLength = floatingBarBottomGap()),
     ) {
         items(podcasts) { podcast ->
-            Column(Modifier.clickable { onClick(podcast) }) {
-                Artwork(podcast.artworkUrl, podcast.title, Modifier.fillMaxWidth().aspectRatio(1f), corner = 9.dp)
+            val anchor = rememberCoverAnchor(podcast.feedUrl, corner = 9.dp)
+            Column(
+                Modifier.clickable {
+                    anchor.mark()
+                    onClick(podcast)
+                },
+            ) {
+                Artwork(
+                    podcast.artworkUrl, podcast.title, Modifier.fillMaxWidth().aspectRatio(1f).then(anchor.modifier),
+                    corner = 9.dp, onLoaded = anchor.onLoaded,
+                )
                 Text(
                     podcast.title, style = MaterialTheme.typography.labelMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(top = 4.dp),
