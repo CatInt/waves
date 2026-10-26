@@ -75,7 +75,7 @@ private fun SearchResults(ui: DiscoverUiState, onOpenPodcast: (Podcast) -> Unit)
         else -> LazyVerticalGrid(
             columns = GridCells.Adaptive(360.dp),
             contentPadding = listContentPadding(),
-            modifier = Modifier.fillMaxSize().verticalFadingEdge(),
+            modifier = Modifier.fillMaxSize().verticalFadingEdge(bottomFadeLength = floatingBarBottomGap()),
         ) {
             itemsIndexed(ui.results) { index, podcast ->
                 Row(
@@ -121,7 +121,7 @@ fun PodcastGrid(
         contentPadding = listContentPadding(horizontal = ScreenGutter),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
-        modifier = modifier.fillMaxSize().verticalFadingEdge(),
+        modifier = modifier.fillMaxSize().verticalFadingEdge(bottomFadeLength = floatingBarBottomGap()),
     ) {
         items(podcasts) { podcast ->
             Column(Modifier.clickable { onClick(podcast) }) {
