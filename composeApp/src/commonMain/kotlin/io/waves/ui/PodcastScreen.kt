@@ -76,6 +76,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.unit.round
+import coil3.memory.MemoryCache
 import io.waves.model.Episode
 import io.waves.model.Podcast
 import io.waves.player.PlaybackState
@@ -104,6 +105,8 @@ fun PodcastScreen(
     val fadePx = with(density) { 48.dp.toPx() }
     // Hero cover's unscrolled position and this screen's in the root, so the morphing cover starts exactly on it.
     var coverRest by remember { mutableStateOf<Offset?>(null) }
+    // The hero cover's loaded image, which the morphing copy shows until its own request lands.
+    var coverKey by remember { mutableStateOf<MemoryCache.Key?>(null) }
     var screenInRoot by remember { mutableStateOf(Offset.Zero) }
     // Where the cover lands: the collapsed chip's bounds.
     var chipInRoot by remember { mutableStateOf<Rect?>(null) }
@@ -175,6 +178,7 @@ fun PodcastScreen(
                                     coverRest = it.positionInRoot() + Offset(0f, listState.firstVisibleItemScrollOffset.toFloat())
                                 }
                             },
+                        onCoverLoaded = { coverKey = it },
                         fadeLine = fadeLine,
                         ui = ui,
                         colors = hero,
@@ -234,6 +238,7 @@ fun PodcastScreen(
             if (rest != null && chip != null) {
                 CoverMorph(
                     ui = ui,
+                    coverKey = coverKey,
                     from = Rect(rest - screenInRoot, Size(coverPx, coverPx)),
                     to = chip.translate(-screenInRoot),
                     fraction = coverFraction(),
@@ -276,6 +281,7 @@ private fun Modifier.fadeUnder(line: () -> Float, leadDistance: Dp = FadeLead): 
 private fun Hero(
     modifier: Modifier,
     coverModifier: Modifier,
+    onCoverLoaded: (MemoryCache.Key?) -> Unit,
     fadeLine: () -> Float,
     ui: PodcastDetailUiState,
     colors: PlayerColors,
@@ -298,7 +304,7 @@ private fun Hero(
         Artwork(
             ui.podcast.artworkUrl, ui.podcast.title,
             coverModifier.shadow(16.dp, RoundedCornerShape(HeroCoverCorner)),
-            size = HeroCoverSize, corner = HeroCoverCorner,
+            size = HeroCoverSize, corner = HeroCoverCorner, onLoaded = onCoverLoaded,
         )
         Spacer(Modifier.height(16.dp))
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -423,7 +429,7 @@ private fun CollapsedBar(
  * colours.
  */
 @Composable
-private fun CoverMorph(ui: PodcastDetailUiState, from: Rect, to: Rect, fraction: Float) {
+private fun CoverMorph(ui: PodcastDetailUiState, coverKey: MemoryCache.Key?, from: Rect, to: Rect, fraction: Float) {
     val density = LocalDensity.current
     // Both ease in slowly; the slide toward the chip and the narrowing trail the shrink, so the cover travels on an arc.
     val shrink = MorphShrinkEasing.transform(fraction)
@@ -457,7 +463,7 @@ private fun CoverMorph(ui: PodcastDetailUiState, from: Rect, to: Rect, fraction:
     ) {
         Artwork(
             ui.podcast.artworkUrl, ui.podcast.title, Modifier.matchParentSize(), corner = 0.dp,
-            alignment = BiasAlignment(0f, bias),
+            alignment = BiasAlignment(0f, bias), placeholderKey = coverKey,
         )
     }
 }
