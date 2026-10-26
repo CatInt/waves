@@ -1,0 +1,22 @@
+CREATE TABLE history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    feedUrl TEXT NOT NULL,
+    guid TEXT NOT NULL,
+    episodeTitle TEXT NOT NULL,
+    podcastTitle TEXT NOT NULL,
+    playedAt INTEGER NOT NULL,
+    deviceId TEXT NOT NULL,
+    UNIQUE (feedUrl, guid, playedAt, deviceId)
+);
+
+CREATE INDEX history_played_at ON history(playedAt DESC);
+
+insertIgnore:
+INSERT OR IGNORE INTO history(feedUrl, guid, episodeTitle, podcastTitle, playedAt, deviceId)
+VALUES (?, ?, ?, ?, ?, ?);
+
+all:
+SELECT * FROM history ORDER BY playedAt DESC, id DESC;
+
+deleteAll:
+DELETE FROM history;

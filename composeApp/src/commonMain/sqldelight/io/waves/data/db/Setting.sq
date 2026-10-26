@@ -1,0 +1,14 @@
+-- Small key/value store for per-install settings (e.g. deviceId).
+CREATE TABLE setting (
+    key TEXT NOT NULL PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+get:
+SELECT value FROM setting WHERE key = ?;
+
+insertIfAbsent:
+INSERT OR IGNORE INTO setting(key, value) VALUES (?, ?);
+
+put:
+INSERT OR REPLACE INTO setting(key, value) VALUES (?, ?);

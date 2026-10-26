@@ -1,0 +1,52 @@
+-- Offline episode downloads (io.waves.download). `status` is a DownloadStatus name.
+-- Added in schema version 2 (migrations/1.sqm). IF NOT EXISTS because some version-1 databases already got
+-- this table from KtorDownloadManager's runtime CREATE_DOWNLOAD_TABLE (keep all three definitions identical).
+CREATE TABLE IF NOT EXISTS download (
+    feedUrl TEXT NOT NULL,
+    guid TEXT NOT NULL,
+    title TEXT NOT NULL,
+    audioUrl TEXT NOT NULL,
+    status TEXT NOT NULL,
+    bytesDownloaded INTEGER NOT NULL DEFAULT 0,
+    totalBytes INTEGER,
+    filePath TEXT NOT NULL,
+    error TEXT,
+    createdAt INTEGER NOT NULL,
+    updatedAt INTEGER NOT NULL,
+    completedAt INTEGER,
+    PRIMARY KEY (feedUrl, guid)
+);
+
+insert:
+INSERT OR REPLACE INTO download(feedUrl, guid, title, audioUrl, status, bytesDownloaded, totalBytes, filePath, error, createdAt, updatedAt, completedAt)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+all:
+SELECT * FROM download ORDER BY createdAt DESC, feedUrl, guid;
+
+byId:
+SELECT * FROM download WHERE feedUrl = ? AND guid = ?;
+
+byStatus:
+SELECT * FROM download WHERE status IN ? ORDER BY createdAt, feedUrl, guid;
+
+completedBefore:
+SELECT * FROM download WHERE status = 'Done' AND completedAt < ?;
+
+setStatus:
+UPDATE download SET status = :status, error = :error, updatedAt = :updatedAt WHERE feedUrl = :feedUrl AND guid = :guid;
+
+setProgress:
+UPDATE download SET bytesDownloaded = :bytesDownloaded, totalBytes = :totalBytes, updatedAt = :updatedAt
+WHERE feedUrl = :feedUrl AND guid = :guid;
+
+markDone:
+UPDATE download SET status = 'Done', error = NULL, bytesDownloaded = :bytes, totalBytes = :bytes,
+    updatedAt = :now, completedAt = :now
+WHERE feedUrl = :feedUrl AND guid = :guid;
+
+setFilePath:
+UPDATE download SET filePath = :filePath WHERE feedUrl = :feedUrl AND guid = :guid;
+
+remove:
+DELETE FROM download WHERE feedUrl = ? AND guid = ?;

@@ -1,0 +1,78 @@
+# Push a tag like v1.2.3 to build the signed Android APK and the macOS DMG and publish them as a GitHub release.
+# Installed apps find new versions through this release (io.waves.update.GitHubReleases).
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build release APK
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          WAVES_RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          WAVES_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          WAVES_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          test -n "$KEYSTORE_BASE64" || { echo "ANDROID_KEYSTORE_BASE64 secret is missing"; exit 1; }
+          echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.jks"
+          version="${GITHUB_REF_NAME#v}"
+          WAVES_RELEASE_STORE_FILE="$RUNNER_TEMP/release.jks" \
+            ./gradlew :composeApp:assembleRelease -Pwaves.version="$version"
+          mkdir -p dist
+          cp composeApp/build/outputs/apk/release/composeApp-release.apk "dist/waves-$version.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: dist/
+
+  macos:
+    runs-on: macos-14 # Apple Silicon
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build release DMG
+        env:
+          WAVES_GOOGLE_DESKTOP_CLIENT_ID: ${{ secrets.GOOGLE_DESKTOP_CLIENT_ID }}
+          WAVES_GOOGLE_DESKTOP_CLIENT_SECRET: ${{ secrets.GOOGLE_DESKTOP_CLIENT_SECRET }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          ./gradlew :composeApp:packageReleaseDmg -Pwaves.version="$version" -Ppackaging.javaHome="$JAVA_HOME"
+          mkdir -p dist
+          cp composeApp/build/compose/binaries/main-release/dmg/Waves-"$version".dmg "dist/Waves-$version-arm64.dmg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/
+
+  publish:
+    needs: [android, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "Waves ${GITHUB_REF_NAME#v}" --generate-notes --verify-tag

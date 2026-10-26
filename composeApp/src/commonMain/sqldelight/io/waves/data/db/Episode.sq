@@ -1,0 +1,27 @@
+CREATE TABLE episode (
+    feedUrl TEXT NOT NULL,
+    guid TEXT NOT NULL,
+    title TEXT NOT NULL,
+    audioUrl TEXT NOT NULL,
+    publishedAt INTEGER,
+    durationSeconds INTEGER,
+    description TEXT,
+    artworkUrl TEXT,
+    PRIMARY KEY (feedUrl, guid)
+);
+
+CREATE INDEX episode_feed_published ON episode(feedUrl, publishedAt DESC);
+
+-- A refresh without a duration (YouTube's comes from a separate request that can fail) keeps the stored one.
+upsert:
+INSERT OR REPLACE INTO episode(feedUrl, guid, title, audioUrl, publishedAt, durationSeconds, description, artworkUrl)
+VALUES (:feedUrl, :guid, :title, :audioUrl, :publishedAt,
+    coalesce(:durationSeconds, (SELECT durationSeconds FROM episode WHERE feedUrl = :feedUrl AND guid = :guid)),
+    :description, :artworkUrl);
+
+byFeed:
+SELECT * FROM episode WHERE feedUrl = ?
+ORDER BY publishedAt IS NULL, publishedAt DESC, title;
+
+byId:
+SELECT * FROM episode WHERE feedUrl = ? AND guid = ?;
