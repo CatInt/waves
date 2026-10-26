@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
@@ -54,24 +53,29 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.lerp
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
@@ -81,6 +85,7 @@ import io.waves.model.Episode
 import io.waves.model.Podcast
 import io.waves.player.PlaybackState
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -95,8 +100,19 @@ fun PodcastScreen(
     /** Null leaves the creator name as plain text. */
     onAuthorClick: ((String) -> Unit)? = null,
     authorClickLabel: (String) -> String = { "Search podcasts by $it" },
+    /** The tapped cover this page's cover grows out of; null fades the cover in with the background instead. */
+    origin: CoverOrigin? = null,
+    /** How far the page's background (and the hero's gradient) has faded in: 0 shut (or closed again), 1 fully open. */
+    entry: () -> Float = { 1f },
+    /** How far the cover has flown from [origin] to its place on the page, likewise. */
+    flight: () -> Float = { 1f },
+    /** How far everything else (text, buttons, episodes, the bar) has faded in, likewise. */
+    content: () -> Float = { 1f },
+    /** The cover flying from [origin] is drawn, its image loaded. */
+    onCoverShown: () -> Unit = {},
 ) {
     val ui by state.state.collectAsState()
+    val shown = Modifier.graphicsLayer { alpha = content() }
     val hero = rememberPlayerColors(rememberArtworkSeed(ui.podcast.artworkUrl))
     val listState = rememberLazyListState()
     var heroHeight by remember { mutableIntStateOf(0) }
@@ -154,7 +170,12 @@ fun PodcastScreen(
             from + (chip.bottom - from) * MorphShrinkEasing.transform(coverFraction())
         }
     }
-    Scaffold(contentWindowInsets = WindowInsets(0)) { padding ->
+    val page = MaterialTheme.colorScheme.background
+    Scaffold(
+        Modifier.drawBehind { drawRect(page, alpha = entry()) },
+        containerColor = Color.Transparent,
+        contentWindowInsets = WindowInsets(0),
+    ) { padding ->
         PullToRefreshBox(
             isRefreshing = ui.refreshing,
             onRefresh = { if (!ui.offline) state.refresh() },
@@ -171,8 +192,10 @@ fun PodcastScreen(
                     val latestPlaying = latest != null && playback.episode?.id == latest.episode.id && playback.isPlaying
                     Hero(
                         modifier = Modifier.onSizeChanged { heroHeight = it.height },
+                        backdrop = entry,
+                        contentModifier = shown,
                         coverModifier = Modifier
-                            .graphicsLayer { alpha = if (coverRest != null && chipInRoot != null) 0f else 1f }
+                            .graphicsLayer { alpha = if (coverRest != null && chipInRoot != null) 0f else content() }
                             .onGloballyPositioned {
                                 if (listState.firstVisibleItemIndex == 0) {
                                     coverRest = it.positionInRoot() + Offset(0f, listState.firstVisibleItemScrollOffset.toFloat())
@@ -193,7 +216,7 @@ fun PodcastScreen(
                     item {
                         Text(
                             ui.error!!, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.padding(horizontal = ScreenGutter, vertical = 8.dp),
+                            modifier = shown.padding(horizontal = ScreenGutter, vertical = 8.dp),
                         )
                     }
                 }
@@ -202,7 +225,7 @@ fun PodcastScreen(
                         Text(
                             if (ui.offline) "No downloaded episodes" else "No episodes yet", style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(horizontal = ScreenGutter, vertical = 12.dp),
+                            modifier = shown.padding(horizontal = ScreenGutter, vertical = 12.dp),
                         )
                     }
                 }
@@ -219,6 +242,7 @@ fun PodcastScreen(
                         downloadControl = downloads?.let { d -> { m -> DownloadButton(row.episode, d, m, compact = true) } },
                         divider = true,
                         dividerBelow = index < ui.episodes.lastIndex,
+                        modifier = shown,
                     )
                 }
             }
@@ -228,7 +252,7 @@ fun PodcastScreen(
             Box(Modifier.adaptiveContentWidth().fillMaxWidth()) {
                 Box(
                     Modifier.fillMaxWidth().height(barHeight + ListDividerHeight)
-                        .graphicsLayer { alpha = collapse }
+                        .graphicsLayer { alpha = collapse * entry() }
                         .background(MaterialTheme.colorScheme.background, AboveListDivider),
                 )
                 if (barPinned) ListDivider(Modifier.padding(top = barHeight))
@@ -238,19 +262,25 @@ fun PodcastScreen(
             if (rest != null && chip != null) {
                 CoverMorph(
                     ui = ui,
-                    coverKey = coverKey,
+                    coverKey = coverKey ?: origin?.image,
                     from = Rect(rest - screenInRoot, Size(coverPx, coverPx)),
                     to = chip.translate(-screenInRoot),
-                    fraction = coverFraction(),
+                    fraction = coverFraction,
+                    origin = origin?.let { it.bounds.translate(-screenInRoot) to it.corner },
+                    entry = entry,
+                    flight = flight,
+                    onShown = onCoverShown,
                 )
             }
-            CollapsedBar(
-                colors = hero,
-                collapsed = collapse > 0.5f,
-                onBack = onBack,
-                onClick = { scope.launch { listState.animateScrollToItem(0) } },
-                chipBounds = Modifier.onGloballyPositioned { chipInRoot = it.boundsInRoot() },
-            )
+            Box(shown) {
+                CollapsedBar(
+                    colors = hero,
+                    collapsed = collapse > 0.5f,
+                    onBack = onBack,
+                    onClick = { scope.launch { listState.animateScrollToItem(0) } },
+                    chipBounds = Modifier.onGloballyPositioned { chipInRoot = it.boundsInRoot() },
+                )
+            }
         }
     }
 }
@@ -280,6 +310,10 @@ private fun Modifier.fadeUnder(line: () -> Float, leadDistance: Dp = FadeLead): 
 @Composable
 private fun Hero(
     modifier: Modifier,
+    /** The gradient's opacity, which comes and goes with the page's background. */
+    backdrop: () -> Float,
+    /** On everything under the cover: the title, creator, buttons and description. */
+    contentModifier: Modifier,
     coverModifier: Modifier,
     onCoverLoaded: (MemoryCache.Key?) -> Unit,
     fadeLine: () -> Float,
@@ -293,9 +327,10 @@ private fun Hero(
 ) {
     val ink = colors.onContainer
     val page = MaterialTheme.colorScheme.background
+    // Like Now Playing: the cover's colour at the top, melting into the page by the bottom.
+    val gradient = Brush.verticalGradient(0f to colors.backdrop, 1f to page)
     Column(
-        // Like Now Playing: the cover's colour at the top, melting into the page by the bottom.
-        modifier.fillMaxWidth().background(Brush.verticalGradient(0f to colors.backdrop, 1f to page))
+        modifier.fillMaxWidth().drawBehind { drawRect(gradient, alpha = backdrop()) }
             .windowInsetsPadding(WindowInsets.statusBars)
             .padding(start = ScreenGutter, end = ScreenGutter, top = CollapsedBarTop + (CollapsedBarHeight - TitleChipArtSize) / 2, bottom = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -307,7 +342,7 @@ private fun Hero(
             size = HeroCoverSize, corner = HeroCoverCorner, onLoaded = onCoverLoaded,
         )
         Spacer(Modifier.height(16.dp))
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(contentModifier, horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
                 ui.podcast.title, style = MaterialTheme.typography.titleLarge, color = ink,
                 textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis,
@@ -373,6 +408,14 @@ private fun Hero(
 }
 
 private val HeroCoverSize = 200.dp
+
+/** Where the hero cover rests, in the root, on a page [width] px wide under a status bar [statusBarTop] px tall. */
+internal fun Density.heroCoverRest(width: Int, statusBarTop: Int): Rect {
+    val size = HeroCoverSize.toPx()
+    val top = statusBarTop + (CollapsedBarTop + (CollapsedBarHeight - TitleChipArtSize) / 2).toPx()
+    return Rect(Offset((width - size) / 2, top), Size(size, size))
+}
+
 private const val MorphStretch = 2.5f
 private val FadeLead = 0.dp
 private val DescriptionFadeLead = 32.dp
@@ -426,24 +469,45 @@ private fun CollapsedBar(
 /**
  * The hero cover, which becomes the chip's background: it moves from its place in the hero to the chip's bounds,
  * reshaping from a square into the pill and cropping to fill it around its most detailed band, in the cover's own
- * colours.
+ * colours. While the page opens or closes ([flight] below 1) it flies between that place and [origin], the tapped
+ * cover's bounds and corner; without an origin it fades with the page ([entry]) instead.
  */
 @Composable
-private fun CoverMorph(ui: PodcastDetailUiState, coverKey: MemoryCache.Key?, from: Rect, to: Rect, fraction: Float) {
-    val density = LocalDensity.current
-    // Both ease in slowly; the slide toward the chip and the narrowing trail the shrink, so the cover travels on an arc.
-    val shrink = MorphShrinkEasing.transform(fraction)
-    val slide = MorphSlideEasing.transform(fraction)
-    val centre = from.center.x + (to.center.x - from.center.x) * slide
-    val width = from.width + (to.width - from.width) * slide
-    val bounds = Rect(
-        left = centre - width / 2,
-        top = from.top + (to.top - from.top) * shrink,
-        right = centre + width / 2,
-        bottom = from.bottom + (to.bottom - from.bottom) * shrink,
-    )
-    val corner = lerp(HeroCoverCorner, ChipCorner, shrink)
-    val shape = RoundedCornerShape(corner)
+private fun CoverMorph(
+    ui: PodcastDetailUiState,
+    coverKey: MemoryCache.Key?,
+    from: Rect,
+    to: Rect,
+    fraction: () -> Float,
+    origin: Pair<Rect, Dp>?,
+    entry: () -> Float,
+    flight: () -> Float,
+    onShown: () -> Unit,
+) {
+    // Leaving the tapped tile, this stays unseen until its image is in, so neither shows its placeholder; if the
+    // image never comes, it shows once the page is open.
+    var loaded by remember { mutableStateOf(false) }
+    // Read only while laying out and drawing, so scrolling and the flight move the cover without recomposing it.
+    val shrink = { MorphShrinkEasing.transform(fraction()) }
+    val lift = { if (origin == null) 1f else flight() }
+    val bounds = {
+        // Both ease in slowly; the slide toward the chip and the narrowing trail the shrink, so the cover travels on an arc.
+        val shrunk = shrink()
+        val slide = MorphSlideEasing.transform(fraction())
+        val centre = from.center.x + (to.center.x - from.center.x) * slide
+        val width = from.width + (to.width - from.width) * slide
+        val placed = Rect(
+            left = centre - width / 2,
+            top = from.top + (to.top - from.top) * shrunk,
+            right = centre + width / 2,
+            bottom = from.bottom + (to.bottom - from.bottom) * shrunk,
+        )
+        if (origin == null) placed else lerp(origin.first, placed, flight())
+    }
+    val corner = {
+        val onPage = lerp(HeroCoverCorner, ChipCorner, shrink())
+        if (origin == null) onPage else lerp(origin.second, onPage, flight())
+    }
     // The chip shows a wide band of the square cover: frame the band with the most detail (lettering, faces) rather
     // than the middle, which is often empty.
     val rows = rememberRowDetail(ui.podcast.artworkUrl)
@@ -451,19 +515,38 @@ private fun CoverMorph(ui: PodcastDetailUiState, coverKey: MemoryCache.Key?, fro
     val bias = remember(rows, band) { rows?.let { cropBias(detailFocus(it, band), band) } ?: 0f }
     Box(
         Modifier
-            .offset { bounds.topLeft.round() }
-            .size(with(density) { bounds.width.toDp() }, with(density) { bounds.height.toDp() })
-            // Gone well before landing: at tiny elevations the platform draws the shadow as a hairline outline.
-            .shadow(16.dp * (1f - shrink / 0.6f).coerceIn(0f, 1f), shape)
-            .clip(shape)
+            .layout { measurable, _ ->
+                val at = bounds()
+                val placeable = measurable.measure(
+                    Constraints.fixed(at.width.roundToInt().coerceAtLeast(0), at.height.roundToInt().coerceAtLeast(0)),
+                )
+                layout(placeable.width, placeable.height) { placeable.place(at.topLeft.round()) }
+            }
+            .graphicsLayer {
+                alpha = when {
+                    origin == null -> entry()
+                    loaded || flight() >= 1f -> 1f
+                    else -> 0f
+                }
+                shape = RoundedCornerShape(corner())
+                clip = true
+                // Gone well before landing: at tiny elevations the platform draws the shadow as a hairline outline.
+                shadowElevation = (16.dp * lift() * (1f - shrink() / 0.6f).coerceIn(0f, 1f)).toPx()
+            }
             .drawWithContent {
                 drawContent()
-                drawFrame(corner.toPx(), shrink)
+                drawFrame(corner().toPx(), shrink() * lift())
             },
     ) {
         Artwork(
             ui.podcast.artworkUrl, ui.podcast.title, Modifier.matchParentSize(), corner = 0.dp,
             alignment = BiasAlignment(0f, bias), placeholderKey = coverKey,
+            onLoaded = {
+                if (!loaded) {
+                    loaded = true
+                    onShown()
+                }
+            },
         )
     }
 }

@@ -149,8 +149,14 @@ private fun ShowShelf(shows: List<Podcast>, onOpenPodcast: (Podcast) -> Unit, mo
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             items(shows, key = { it.feedUrl }) { podcast ->
-                Box(Modifier.clip(RoundedCornerShape(10.dp)).clickable { onOpenPodcast(podcast) }) {
-                    Artwork(podcast.artworkUrl, podcast.title, size = 92.dp, corner = 9.dp)
+                val anchor = rememberCoverAnchor(podcast.feedUrl, corner = 9.dp)
+                Box(
+                    Modifier.clip(RoundedCornerShape(10.dp)).clickable {
+                        anchor.mark()
+                        onOpenPodcast(podcast)
+                    },
+                ) {
+                    Artwork(podcast.artworkUrl, podcast.title, anchor.modifier, size = 92.dp, corner = 9.dp, onLoaded = anchor.onLoaded)
                 }
             }
         }
