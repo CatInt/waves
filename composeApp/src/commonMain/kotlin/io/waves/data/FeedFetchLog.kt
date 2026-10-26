@@ -9,7 +9,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.CoroutineContext
 
-/** When show pages last fetched each feed (epoch ms). Local only (not synced). */
+/** When each feed was last fetched (epoch ms), by a show page or the background refresh. Local only (not synced). */
 interface FeedFetchLog {
     suspend fun fetchedAt(feedUrl: String): Long?
     suspend fun record(feedUrl: String, epochMs: Long)

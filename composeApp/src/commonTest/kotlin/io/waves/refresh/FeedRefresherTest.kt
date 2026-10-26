@@ -6,6 +6,7 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import io.waves.data.InMemoryFeedFetchLog
 import io.waves.model.EpisodeId
 import io.waves.model.Podcast
 import kotlin.test.Test
@@ -162,6 +163,21 @@ class FeedRefresherTest {
         feeds.behavior = {}
         feeds.feeds["a"] = listOf(episode("a", "during-outage", firstRefresh + 2 * hour))
         assertEquals(1, r.refreshAll().newEpisodeCount)
+    }
+
+    @Test
+    fun successfulFetchesAreLoggedForShowPages() = runTest {
+        val feeds = FakeFeeds().apply { feeds["a"] = emptyList() }
+        val log = InMemoryFeedFetchLog()
+        val r = FeedRefresher(feeds, RefreshFakeLibrary(listOf(podcast("a"))), fetchLog = log, clock = { now })
+        r.refreshAll()
+        assertEquals(now, log.fetchedAt("a"))
+
+        val fetched = now
+        now += hour
+        feeds.behavior = { error("offline") }
+        r.refreshAll()
+        assertEquals(fetched, log.fetchedAt("a"))
     }
 
     @Test

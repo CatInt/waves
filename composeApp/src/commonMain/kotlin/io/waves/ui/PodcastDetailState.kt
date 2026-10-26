@@ -179,7 +179,7 @@ class PodcastDetailState(
     fun clearError() { error.value = null }
 }
 
-/** Whether a show page fetched a feed within [freshFor], so reopening the show soon after doesn't fetch it again. */
+/** Whether a feed was fetched within [freshFor] (here or by the background refresh), so a show page doesn't fetch it again. */
 class RecentFetches(
     private val log: FeedFetchLog = InMemoryFeedFetchLog(),
     private val freshFor: Duration = 1.hours,

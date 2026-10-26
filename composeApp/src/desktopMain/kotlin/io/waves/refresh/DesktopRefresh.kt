@@ -4,7 +4,10 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.java.Java
 import io.ktor.client.plugins.cache.HttpCache
 import io.ktor.client.plugins.cache.storage.FileStorage
+import io.waves.data.FeedFetchLog
 import io.waves.data.LibraryRepository
+import io.waves.data.SqlFeedFetchLog
+import io.waves.data.SqlLibraryRepository
 import io.waves.data.defaultDatabaseFile
 import io.waves.feed.FeedRepository
 import io.waves.youtube.YoutubeFeedRepository
@@ -53,7 +56,8 @@ object DesktopRefresh {
         library: LibraryRepository,
         feeds: FeedRepository = createFeedRepository(),
         stateStore: RefreshStateStore = PropertiesRefreshStateStore(File(defaultDir(), "refresh-state.properties")),
-    ): FeedRefresher = FeedRefresher(feeds, library, stateStore)
+        fetchLog: FeedFetchLog? = (library as? SqlLibraryRepository)?.let { SqlFeedFetchLog(it.driver) },
+    ): FeedRefresher = FeedRefresher(feeds, library, stateStore, fetchLog)
 
     /** Creates and starts the scheduler: refresh on start, then every [period]. */
     fun start(
