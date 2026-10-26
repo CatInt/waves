@@ -1,0 +1,18 @@
+-- Schema version 1 -> 2: offline downloads.
+-- IF NOT EXISTS: builds that shipped schema version 1 created this table lazily at runtime
+-- (KtorDownloadManager / CREATE_DOWNLOAD_TABLE), so it may already exist with identical columns.
+CREATE TABLE IF NOT EXISTS download (
+    feedUrl TEXT NOT NULL,
+    guid TEXT NOT NULL,
+    title TEXT NOT NULL,
+    audioUrl TEXT NOT NULL,
+    status TEXT NOT NULL,
+    bytesDownloaded INTEGER NOT NULL DEFAULT 0,
+    totalBytes INTEGER,
+    filePath TEXT NOT NULL,
+    error TEXT,
+    createdAt INTEGER NOT NULL,
+    updatedAt INTEGER NOT NULL,
+    completedAt INTEGER,
+    PRIMARY KEY (feedUrl, guid)
+);

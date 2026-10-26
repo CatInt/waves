@@ -1,0 +1,5 @@
+-- Schema version 3 -> 4: colours picked from cover art.
+CREATE TABLE artwork_color (
+    url TEXT NOT NULL PRIMARY KEY,
+    argb INTEGER NOT NULL
+);

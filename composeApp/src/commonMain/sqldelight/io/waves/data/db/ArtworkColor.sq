@@ -1,0 +1,12 @@
+-- Colour picked from each cover image (ARGB), by image URL. Stored once the image has loaded and never
+-- recomputed; local only.
+CREATE TABLE artwork_color (
+    url TEXT NOT NULL PRIMARY KEY,
+    argb INTEGER NOT NULL
+);
+
+all:
+SELECT url, argb FROM artwork_color;
+
+put:
+INSERT OR REPLACE INTO artwork_color(url, argb) VALUES (?, ?);

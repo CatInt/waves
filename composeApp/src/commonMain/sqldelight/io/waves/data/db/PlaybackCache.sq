@@ -1,0 +1,24 @@
+-- Audio the player has stored while streaming, separate from explicit downloads.
+-- An episode is fully cached when bytesCached >= totalBytes > 0.
+CREATE TABLE playback_cache (
+    feedUrl TEXT NOT NULL,
+    guid TEXT NOT NULL,
+    audioUrl TEXT NOT NULL,
+    bytesCached INTEGER NOT NULL,
+    totalBytes INTEGER,
+    updatedAt INTEGER NOT NULL,
+    PRIMARY KEY (feedUrl, guid)
+);
+
+all:
+SELECT * FROM playback_cache ORDER BY updatedAt DESC, feedUrl, guid;
+
+byId:
+SELECT * FROM playback_cache WHERE feedUrl = ? AND guid = ?;
+
+upsert:
+INSERT OR REPLACE INTO playback_cache(feedUrl, guid, audioUrl, bytesCached, totalBytes, updatedAt)
+VALUES (?, ?, ?, ?, ?, ?);
+
+remove:
+DELETE FROM playback_cache WHERE feedUrl = ? AND guid = ?;

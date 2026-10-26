@@ -1,0 +1,10 @@
+-- Schema version 2 -> 3: playback cache (streamed audio kept on disk, distinct from downloads).
+CREATE TABLE playback_cache (
+    feedUrl TEXT NOT NULL,
+    guid TEXT NOT NULL,
+    audioUrl TEXT NOT NULL,
+    bytesCached INTEGER NOT NULL,
+    totalBytes INTEGER,
+    updatedAt INTEGER NOT NULL,
+    PRIMARY KEY (feedUrl, guid)
+);
