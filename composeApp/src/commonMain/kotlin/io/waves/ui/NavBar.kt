@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
@@ -135,6 +136,8 @@ internal val LocalTabPage = staticCompositionLocalOf<TabPage?> { null }
 /** Height of [TabStrip]: 36 dp chips in 4 dp padding. */
 internal val TabStripHeight = 44.dp
 
+private val TabRippleRadius = 140.dp
+
 /** Reserves the [TabStrip] area in a tab page's top bar. */
 @Composable
 internal fun TabStripPlaceholder(page: TabPage) {
@@ -183,7 +186,15 @@ private fun TabChip(tab: Tab, icon: ImageVector, selection: Float, labelShown: F
             .height(36.dp)
             .clip(CircleShape)
             .drawBehind { drawRect(colors.secondaryContainer.copy(alpha = colors.secondaryContainer.alpha * selection)) }
-            .selectable(selected = selection > 0.5f, role = Role.Tab, onClick = onClick)
+            .selectable(
+                selected = selection > 0.5f,
+                interactionSource = null,
+                // The default radius follows the chip's size when pressed, so it no longer fills a chip that then
+                // widens to show its label; this one covers the widest chip from any point and is clipped to the pill.
+                indication = ripple(radius = TabRippleRadius),
+                role = Role.Tab,
+                onClick = onClick,
+            )
             .padding(horizontal = 10.dp + 4.dp * labelShown),
         verticalAlignment = Alignment.CenterVertically,
     ) {
