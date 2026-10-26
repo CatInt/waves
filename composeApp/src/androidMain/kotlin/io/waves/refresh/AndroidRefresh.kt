@@ -26,6 +26,8 @@ import io.ktor.client.plugins.cache.HttpCache
 import io.ktor.client.plugins.cache.storage.FileStorage
 import io.waves.R
 import io.waves.data.LibraryRepository
+import io.waves.data.SqlFeedFetchLog
+import io.waves.data.SqlLibraryRepository
 import io.waves.data.createLibraryRepository
 import io.waves.feed.FeedRepository
 import io.waves.youtube.YoutubeFeedRepository
@@ -104,11 +106,15 @@ object AndroidRefresh {
         return YoutubeFeedRepository(client)
     }
 
-    private fun build(context: Context, library: LibraryRepository?, feeds: FeedRepository?) = FeedRefresher(
-        feeds = feeds ?: createFeedRepository(context),
-        library = library ?: createLibraryRepository(context),
-        stateStore = SharedPrefsRefreshStateStore(context),
-    )
+    private fun build(context: Context, library: LibraryRepository?, feeds: FeedRepository?): FeedRefresher {
+        val lib = library ?: createLibraryRepository(context)
+        return FeedRefresher(
+            feeds = feeds ?: createFeedRepository(context),
+            library = lib,
+            stateStore = SharedPrefsRefreshStateStore(context),
+            fetchLog = (lib as? SqlLibraryRepository)?.let { SqlFeedFetchLog(it.driver) },
+        )
+    }
 
     private fun networkConstraint() = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
 

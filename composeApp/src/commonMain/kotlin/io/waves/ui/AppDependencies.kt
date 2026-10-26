@@ -68,7 +68,7 @@ class AppDependencies(
     val offline: StateFlow<Boolean> = MutableStateFlow(false),
     /** Colours picked from cover art. In memory by default. */
     val artworkColors: ArtworkColorStore = InMemoryArtworkColorStore(),
-    /** When show pages last fetched each feed. In memory by default. */
+    /** When each feed was last fetched. In memory by default. */
     val feedFetches: FeedFetchLog = InMemoryFeedFetchLog(),
 )
 

@@ -1,6 +1,7 @@
 package io.waves.refresh
 
 import io.waves.currentTimeMillis
+import io.waves.data.FeedFetchLog
 import io.waves.data.LibraryRepository
 import io.waves.feed.FeedRepository
 import io.waves.model.Episode
@@ -40,6 +41,8 @@ class FeedRefresher(
     private val feeds: FeedRepository,
     private val library: LibraryRepository,
     private val stateStore: RefreshStateStore = InMemoryRefreshStateStore(),
+    /** Also told of each successful fetch, so show pages opened soon after don't fetch the feed again. */
+    private val fetchLog: FeedFetchLog? = null,
     private val concurrency: Int = 4,
     private val perFeedTimeout: Duration = 30.seconds,
     private val firstRefreshWindow: Duration = 7.days,
@@ -127,6 +130,7 @@ class FeedRefresher(
             library.upsertEpisodes(feedUrl, episodes)
             onEpisodesAbsent?.invoke(absentEpisodeIds(feedUrl, known, episodes))
             stateStore.setLastRefreshedAt(feedUrl, fetchedAt)
+            fetchLog?.record(feedUrl, fetchedAt)
 
             val display = mergeMetadata(podcast, feed.podcast)
             if (display != podcast) library.updatePodcastMetadata(display)

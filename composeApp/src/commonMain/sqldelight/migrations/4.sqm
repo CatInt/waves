@@ -1,4 +1,4 @@
--- Schema version 4 -> 5: when show pages last fetched each feed.
+-- Schema version 4 -> 5: when each feed was last fetched.
 CREATE TABLE feed_fetch (
     feed_url TEXT NOT NULL PRIMARY KEY,
     fetched_at INTEGER NOT NULL

@@ -1,5 +1,5 @@
--- When a show page last fetched each feed (epoch ms), so reopening the show soon after doesn't fetch it again;
--- local only.
+-- When each feed was last fetched (epoch ms), by a show page or the background refresh, so opening the show soon
+-- after doesn't fetch it again; local only.
 CREATE TABLE feed_fetch (
     feed_url TEXT NOT NULL PRIMARY KEY,
     fetched_at INTEGER NOT NULL
