@@ -3,15 +3,15 @@ package io.waves.ui
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerDefaults
 import androidx.compose.foundation.pager.PagerSnapDistance
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onPlaced
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
@@ -196,15 +196,24 @@ fun WavesApp(deps: AppDependencies, app: AppState = remember(deps) { AppState(de
                     )
                     val stripWidth = stripSlot.widths[nav.currentTab]
                     if (atRoot && stripWidth != null) {
-                        val density = LocalDensity.current
                         val offline by deps.offline.collectAsState()
                         TabStrip(
                             position = pager.currentPage + pager.currentPageOffsetFraction,
                             onSelect = nav::select,
                             offline = offline,
+                            // Centred on the screen, but kept within the slot so it never runs under the bar's actions.
                             modifier = Modifier
-                                .offset { stripSlot.offset }
-                                .widthIn(max = with(density) { stripWidth.toDp() })
+                                .offset { IntOffset(0, stripSlot.offset.y) }
+                                .layout { measurable, constraints ->
+                                    val placeable = measurable.measure(
+                                        constraints.copy(minWidth = 0, maxWidth = minOf(stripWidth, constraints.maxWidth)),
+                                    )
+                                    layout(constraints.maxWidth, placeable.height) {
+                                        val left = stripSlot.offset.x
+                                        val centred = (constraints.maxWidth - placeable.width) / 2
+                                        placeable.place(centred.coerceIn(left, maxOf(left, left + stripWidth - placeable.width)), 0)
+                                    }
+                                }
                                 .then(hiddenByPlayer),
                         )
                     }
