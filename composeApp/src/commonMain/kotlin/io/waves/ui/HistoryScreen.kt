@@ -63,7 +63,8 @@ fun HistoryScreen(
         }
         val today = HistoryState.localDate(currentTimeMillis(), TimeZone.currentSystemDefault())
         LazyColumn(
-            Modifier.padding(padding).adaptiveContentWidth().fillMaxSize().verticalFadingEdge(),
+            Modifier.padding(padding).adaptiveContentWidth().fillMaxSize()
+                .verticalFadingEdge(bottomFadeLength = floatingBarBottomGap()),
             contentPadding = listContentPadding(),
         ) {
             ui.days.forEach { day ->

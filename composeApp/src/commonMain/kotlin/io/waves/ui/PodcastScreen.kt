@@ -72,6 +72,7 @@ import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.unit.round
@@ -109,8 +110,8 @@ fun PodcastScreen(
     val scope = rememberCoroutineScope()
     val coverPx = with(density) { HeroCoverSize.toPx() }
     // The whole collapse: 0 at the top, 1 after [MorphStretch] times the scroll the cover's bottom must rise to meet
-    // the chip's (at most the hero's whole travel). The cover holds still for the first [TextPhase] of it, while the
-    // hero's text scrolls up and fades under it, then morphs into the chip over the rest.
+    // the chip's (at most the hero's whole travel). The cover morphs into the chip over all of it while the hero's
+    // text scrolls up and fades under it.
     val morph by remember(coverPx, barPx) {
         derivedStateOf {
             val rest = coverRest
@@ -138,7 +139,7 @@ fun PodcastScreen(
     }
     // The first row's divider has reached the bar's bottom.
     val barPinned by remember { derivedStateOf { collapse >= 1f } }
-    val coverFraction = { ((morph - TextPhase) / (1f - TextPhase)).coerceIn(0f, 1f) }
+    val coverFraction = { morph }
     // The morphing cover's bottom edge in the root: hero text fades as it slides under it.
     val fadeLine = {
         val rest = coverRest
@@ -157,7 +158,8 @@ fun PodcastScreen(
             modifier = Modifier.padding(padding).fillMaxSize().onGloballyPositioned { screenInRoot = it.positionInRoot() },
         ) {
             LazyColumn(
-                Modifier.adaptiveContentWidth().fillMaxSize(),
+                Modifier.adaptiveContentWidth().fillMaxSize()
+                    .verticalFadingEdge(fadeLength = 0.dp, bottomFadeLength = floatingBarBottomGap()),
                 state = listState,
                 contentPadding = listContentPadding(top = 0.dp),
             ) {
@@ -249,19 +251,20 @@ fun PodcastScreen(
 }
 
 /**
- * Fades this out as it slides under [line], a y in the root: fully shown while its top is [FadeLead] or more below
- * the line, gone once its bottom has passed it.
+ * Fades this out as it slides under [line], a y in the root: fully shown while its top is [leadDistance] or more
+ * below the line, gone once [FadeSpan] of its height has passed it.
  */
 @Composable
-private fun Modifier.fadeUnder(line: () -> Float): Modifier {
+private fun Modifier.fadeUnder(line: () -> Float, leadDistance: Dp = FadeLead): Modifier {
     var top by remember { mutableStateOf(Float.NaN) }
     var height by remember { mutableStateOf(0f) }
-    val lead = with(LocalDensity.current) { FadeLead.toPx() }
+    val lead = with(LocalDensity.current) { leadDistance.toPx() }
     return onGloballyPositioned {
         top = it.positionInRoot().y
         height = it.size.height.toFloat()
     }.graphicsLayer {
-        alpha = if (top.isNaN()) 1f else ((top + height - line()) / (height + lead)).coerceIn(0f, 1f)
+        val span = height * FadeSpan
+        alpha = if (top.isNaN()) 1f else ((top + span - line()) / (span + lead)).coerceIn(0f, 1f)
     }
 }
 
@@ -358,15 +361,16 @@ private fun Hero(
                     )
                 }
             }
-            Description(ui, ink, Modifier.fadeUnder(fadeLine))
+            Description(ui, ink, Modifier.fadeUnder(fadeLine, leadDistance = DescriptionFadeLead))
         }
     }
 }
 
 private val HeroCoverSize = 200.dp
 private const val MorphStretch = 2.5f
-private const val TextPhase = 0.3f
 private val FadeLead = 0.dp
+private val DescriptionFadeLead = 32.dp
+private const val FadeSpan = 0.5f
 private val MorphShrinkEasing = CubicBezierEasing(0.55f, 0f, 0.35f, 1f)
 private val MorphSlideEasing = CubicBezierEasing(0.7f, 0f, 0.3f, 1f)
 private val HeroCoverCorner = 16.dp
