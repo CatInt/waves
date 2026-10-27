@@ -6,6 +6,7 @@ import io.waves.data.PlaybackSession
 import io.waves.data.PlaybackSessionStore
 import io.waves.data.UserSettings
 import io.waves.model.Episode
+import io.waves.model.EpisodeId
 import io.waves.model.HistoryEntry
 import io.waves.model.PlaybackProgress
 import io.waves.model.Podcast
@@ -35,6 +36,7 @@ import kotlinx.coroutines.sync.withLock
  * - resumes episodes from saved progress,
  * - saves progress every [saveIntervalMs] while playing, and on pause / stop / episode switch,
  * - marks episodes completed when the player reports the end, within 30s of the end, or past 95%,
+ * - marks episodes complete or not when the user says so ([setCompleted]),
  * - records a [HistoryEntry] whenever playback of an episode starts,
  * - calls [onLocalChange] after each of those writes,
  * - applies [settings]: the player starts at (and follows changes of) `defaultSpeed`; [skipBack] / [skipForward]
@@ -75,6 +77,9 @@ class PlaybackController(
 
     private val saveMutex = Mutex()
     private var lastSaved: PlaybackProgress? = null
+
+    /** The loaded episode, marked complete by the user: saved as completed wherever it is until it plays on. */
+    @Volatile private var markedComplete: EpisodeId? = null
 
     /** Skip intervals from [settings] (for the skip buttons' labels). */
     val skipIntervals: StateFlow<SkipIntervals> =
@@ -127,6 +132,7 @@ class PlaybackController(
     /** Play [episode], resuming from its saved position unless it was completed. */
     fun play(episode: Episode, podcast: Podcast) {
         restored.value = null
+        markedComplete = null
         scope.launch {
             val current = player.state.value
             if (current.episode != null && current.episode.id != episode.id) save(current)
@@ -160,8 +166,11 @@ class PlaybackController(
             s.episode == null -> Unit
             s.isPlaying -> pause()
             // Replay the original episode (matched by id): the reported one may point at a since-deleted file.
-            s.isEnded -> player.play(source?.takeIf { it.id == s.episode.id } ?: s.episode, 0, _podcast.value?.title)
-            else -> player.resume()
+            s.isEnded -> {
+                markedComplete = null
+                player.play(source?.takeIf { it.id == s.episode.id } ?: s.episode, 0, _podcast.value?.title)
+            }
+            else -> resume()
         }
     }
 
@@ -171,7 +180,33 @@ class PlaybackController(
         scope.launch { save(s.copy(isPlaying = false)) }
     }
 
-    fun resume() = player.resume()
+    fun resume() {
+        markedComplete = null
+        player.resume()
+    }
+
+    /**
+     * Marks [episode] complete, keeping its position (it starts over next time), or not complete, from the start.
+     * The loaded episode, marked complete, keeps being saved so while it plays on, until it is played or resumed again.
+     */
+    fun setCompleted(episode: Episode, completed: Boolean) {
+        scope.launch {
+            saveMutex.withLock {
+                val saved = library.progress(episode.id).first()
+                val progress = PlaybackProgress(
+                    episodeId = episode.id,
+                    positionMs = if (completed) saved?.positionMs ?: 0L else 0L,
+                    durationMs = saved?.durationMs?.takeIf { it > 0 } ?: ((episode.durationSeconds ?: 0L) * 1000),
+                    completed = completed,
+                    updatedAtEpochMs = clock(),
+                )
+                markedComplete = episode.id.takeIf { completed && player.state.value.episode?.id == it }
+                library.saveProgress(progress)
+                lastSaved = progress
+            }
+            onLocalChange()
+        }
+    }
 
     fun seekTo(positionMs: Long) {
         restored.value?.let { r ->
@@ -292,7 +327,7 @@ class PlaybackController(
             episodeId = episode.id,
             positionMs = s.positionMs,
             durationMs = durationMs,
-            completed = s.isEnded || isCompleted(s.positionMs, durationMs),
+            completed = s.isEnded || isCompleted(s.positionMs, durationMs) || episode.id == markedComplete,
             updatedAtEpochMs = clock(),
         )
         saveMutex.withLock {
