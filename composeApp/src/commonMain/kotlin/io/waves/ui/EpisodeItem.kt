@@ -96,6 +96,7 @@ fun EpisodeItem(
         modifier.fillMaxWidth()
             .topDivider(divider)
             .zigzagClickable(top = divider, bottom = dividerBelow, onClick = onPlay)
+            .contentInset()
             // The divider is drawn inside the top padding; without one, content keeps the same distance from
             // whatever line is above the row.
             .padding(

@@ -42,18 +42,37 @@ val ScreenGutter = 24.dp
 /** Whether the window is wider than tall; provided at the app root. */
 val LocalIsLandscapeLayout = staticCompositionLocalOf { false }
 
+/** How wide phone-designed content gets in landscape (wide desktop window, landscape tablet). */
+val ContentMaxWidth = 640.dp
+
 /**
- * Keeps phone-designed content readable in landscape (wide desktop window, landscape tablet): caps it at
- * [maxContentWidth] and centers it. No-op in portrait. Apply at the front of the main content's modifier chain;
- * top bars stay full width.
+ * Keeps phone-designed content readable in landscape: caps it at [maxContentWidth] and centers it. No-op in portrait.
+ * Apply at the front of the main content's modifier chain; top bars stay full width. Screens whose backgrounds and
+ * dividers should reach the window's edges span it instead and pad each row's content with [contentInset].
  */
 @Composable
-fun Modifier.adaptiveContentWidth(maxContentWidth: Dp = 640.dp): Modifier =
+fun Modifier.adaptiveContentWidth(maxContentWidth: Dp = ContentMaxWidth): Modifier =
     if (LocalIsLandscapeLayout.current) {
         fillMaxWidth().wrapContentWidth(Alignment.CenterHorizontally).widthIn(max = maxContentWidth)
     } else {
         this
     }
+
+/**
+ * Space on each side of the centred [ContentMaxWidth] column in a landscape window, 0 in portrait; provided at the
+ * app root, where screens span the window.
+ */
+val LocalContentInset = staticCompositionLocalOf { 0.dp }
+
+internal fun contentInset(windowWidth: Dp, landscape: Boolean): Dp =
+    if (landscape) ((windowWidth - ContentMaxWidth) / 2).coerceAtLeast(0.dp) else 0.dp
+
+/**
+ * Pads by [LocalContentInset] on both sides: in a full-width row, puts its content in the centred column while the
+ * row's own background and divider, drawn before this, span the window.
+ */
+@Composable
+fun Modifier.contentInset(): Modifier = padding(horizontal = LocalContentInset.current)
 
 fun Modifier.verticalFadingEdge(fadeLength: Dp = 8.dp, bottomFadeLength: Dp = fadeLength): Modifier =
     graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)

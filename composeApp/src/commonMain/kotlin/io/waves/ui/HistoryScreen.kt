@@ -63,7 +63,7 @@ fun HistoryScreen(
         }
         val today = HistoryState.localDate(currentTimeMillis(), TimeZone.currentSystemDefault())
         LazyColumn(
-            Modifier.padding(padding).adaptiveContentWidth().fillMaxSize()
+            Modifier.padding(padding).fillMaxSize()
                 .verticalFadingEdge(bottomFadeLength = floatingBarBottomGap()),
             contentPadding = listContentPadding(),
         ) {
@@ -72,7 +72,7 @@ fun HistoryScreen(
                     Surface(Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surface) {
                         SectionLabel(
                             dayLabel(day.date, today),
-                            Modifier.padding(start = ScreenGutter, end = ScreenGutter, top = 10.dp, bottom = 4.dp),
+                            Modifier.contentInset().padding(start = ScreenGutter, end = ScreenGutter, top = 10.dp, bottom = 4.dp),
                         )
                     }
                 }
@@ -81,6 +81,7 @@ fun HistoryScreen(
                     Row(
                         Modifier.fillMaxWidth().topDivider(index > 0)
                             .zigzagClickable(top = index > 0, bottom = index < day.entries.lastIndex) { onPlay(entry) }
+                            .contentInset()
                             .padding(horizontal = ScreenGutter, vertical = ListRowVerticalPadding),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(ListRowGap),

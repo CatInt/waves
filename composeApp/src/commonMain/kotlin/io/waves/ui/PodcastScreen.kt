@@ -182,7 +182,7 @@ fun PodcastScreen(
             modifier = Modifier.padding(padding).fillMaxSize().onGloballyPositioned { screenInRoot = it.positionInRoot() },
         ) {
             LazyColumn(
-                Modifier.adaptiveContentWidth().fillMaxSize()
+                Modifier.fillMaxSize()
                     .verticalFadingEdge(fadeLength = 0.dp, bottomFadeLength = floatingBarBottomGap()),
                 state = listState,
                 contentPadding = listContentPadding(top = 0.dp),
@@ -216,7 +216,7 @@ fun PodcastScreen(
                     item {
                         Text(
                             ui.error!!, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error,
-                            modifier = shown.padding(horizontal = ScreenGutter, vertical = 8.dp),
+                            modifier = shown.contentInset().padding(horizontal = ScreenGutter, vertical = 8.dp),
                         )
                     }
                 }
@@ -225,7 +225,7 @@ fun PodcastScreen(
                         Text(
                             if (ui.offline) "No downloaded episodes" else "No episodes yet", style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = shown.padding(horizontal = ScreenGutter, vertical = 12.dp),
+                            modifier = shown.contentInset().padding(horizontal = ScreenGutter, vertical = 12.dp),
                         )
                     }
                 }
@@ -249,7 +249,7 @@ fun PodcastScreen(
             // The collapsed bar's backdrop, fading in as the hero's bottom slides under it, and once it has, the
             // divider fixed along its bottom for the rows to scroll under.
             val barHeight = with(density) { barPx.toDp() }
-            Box(Modifier.adaptiveContentWidth().fillMaxWidth()) {
+            Box(Modifier.fillMaxWidth()) {
                 Box(
                     Modifier.fillMaxWidth().height(barHeight + ListDividerHeight)
                         .graphicsLayer { alpha = collapse * entry() }
@@ -331,6 +331,7 @@ private fun Hero(
     val gradient = Brush.verticalGradient(0f to colors.backdrop, 1f to page)
     Column(
         modifier.fillMaxWidth().drawBehind { drawRect(gradient, alpha = backdrop()) }
+            .contentInset()
             .windowInsetsPadding(WindowInsets.statusBars)
             .padding(start = ScreenGutter, end = ScreenGutter, top = CollapsedBarTop + (CollapsedBarHeight - TitleChipArtSize) / 2, bottom = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
