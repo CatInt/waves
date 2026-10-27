@@ -49,6 +49,8 @@ fun HomeScreen(
     onDiscover: () -> Unit,
     /** Null hides the per-episode download control. */
     downloads: DownloadsState? = null,
+    /** Marks an episode complete or not; null hides the per-episode button. */
+    onSetCompleted: ((Episode, Boolean) -> Unit)? = null,
 ) {
     val ui by state.state.collectAsState()
     Scaffold(
@@ -129,6 +131,7 @@ fun HomeScreen(
                                 downloadControl = downloads?.let { d -> { m -> DownloadButton(item.row.episode, d, m, compact = true) } },
                                 divider = index > 0,
                                 dividerBelow = index < ui.upNext.lastIndex,
+                                onToggleComplete = onSetCompleted?.let { { it(item.row.episode, !item.row.played) } },
                             )
                         }
                     }

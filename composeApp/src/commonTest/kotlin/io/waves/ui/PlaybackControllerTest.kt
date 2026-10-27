@@ -238,6 +238,45 @@ class PlaybackControllerTest {
     }
 
     @Test
+    fun markingCompleteKeepsThePositionAndNotCompleteStartsOver() = runTest {
+        val ep = episode(podcastA, 1, durationSec = 600)
+        library.saveProgress(PlaybackProgress(ep.id, 120_000, 600_000, false, 5))
+        val c = controller()
+        c.setCompleted(ep, true)
+        runCurrent()
+        assertEquals(PlaybackProgress(ep.id, 120_000, 600_000, true, now), library.progress(ep.id).first())
+
+        c.setCompleted(ep, false)
+        runCurrent()
+        assertEquals(PlaybackProgress(ep.id, 0, 600_000, false, now), library.progress(ep.id).first())
+        assertTrue(changes.count >= 2)
+    }
+
+    @Test
+    fun theLoadedEpisodeMarkedCompleteStaysCompleteUntilResumed() = runTest {
+        val ep = episode(podcastA, 1, durationSec = 600)
+        val c = controller()
+        c.play(ep, podcastA)
+        runCurrent()
+        player.advanceTo(60_000)
+        c.setCompleted(ep, true)
+        runCurrent()
+        player.advanceTo(70_000)
+        advanceTimeBy(10_001)
+        assertEquals(true, library.progress(ep.id).first()?.completed, "saved while playing on")
+        c.pause()
+        runCurrent()
+        assertEquals(true, library.progress(ep.id).first()?.completed, "saved on pause")
+
+        c.togglePlayPause()
+        runCurrent()
+        player.advanceTo(80_000)
+        c.pause()
+        runCurrent()
+        assertEquals(false, library.progress(ep.id).first()?.completed, "listening again")
+    }
+
+    @Test
     fun marksCompletedWithinThirtySecondsOfEnd() = runTest {
         val ep = episode(podcastA, 1, durationSec = 600)
         val c = controller()

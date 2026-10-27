@@ -97,6 +97,8 @@ fun PodcastScreen(
     onPause: () -> Unit,
     /** Null hides the per-episode download control. */
     downloads: DownloadsState? = null,
+    /** Marks an episode complete or not; null hides the per-episode button. */
+    onSetCompleted: ((Episode, Boolean) -> Unit)? = null,
     /** Null leaves the creator name as plain text. */
     onAuthorClick: ((String) -> Unit)? = null,
     authorClickLabel: (String) -> String = { "Search podcasts by $it" },
@@ -242,6 +244,7 @@ fun PodcastScreen(
                         downloadControl = downloads?.let { d -> { m -> DownloadButton(row.episode, d, m, compact = true) } },
                         divider = true,
                         dividerBelow = index < ui.episodes.lastIndex,
+                        onToggleComplete = onSetCompleted?.let { { it(row.episode, !row.played) } },
                         modifier = shown,
                     )
                 }

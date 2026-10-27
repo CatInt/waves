@@ -303,6 +303,7 @@ private fun CurrentScreen(
                                 onPause = app.playback::pause,
                                 onDiscover = { nav.select(Tab.Discover) },
                                 downloads = app.downloads,
+                                onSetCompleted = app.playback::setCompleted,
                             )
                             Tab.Discover -> DiscoverScreen(app.discover) { openPodcast(it, true) }
                             Tab.History -> HistoryScreen(app.history, deps.deviceId, playFromHistory, app.downloads)
@@ -383,6 +384,7 @@ private fun CurrentScreen(
                     onPlay = app.playback::play,
                     onPause = app.playback::pause,
                     downloads = app.downloads,
+                    onSetCompleted = app.playback::setCompleted,
                     onAuthorClick = { author ->
                         val search = {
                             nav.select(Tab.Discover)

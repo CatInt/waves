@@ -1,10 +1,13 @@
 package io.waves.ui
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.indication
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -17,7 +20,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.PauseCircle
 import androidx.compose.material.icons.outlined.PlayCircle
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -67,6 +72,7 @@ private val RowControlSize = 40.dp
  * @param showDescription false in narrow lists (the menu bar panel) to keep rows short.
  * @param divider draws a hairline above the row; lists pass false for their first row.
  * @param dividerBelow whether the next row draws a divider, so the press ripple reaches down to it.
+ * @param onToggleComplete after the download control: marks the episode complete, or once played, not complete.
  */
 @Composable
 fun EpisodeItem(
@@ -85,6 +91,7 @@ fun EpisodeItem(
     showDescription: Boolean = true,
     divider: Boolean = false,
     dividerBelow: Boolean = false,
+    onToggleComplete: (() -> Unit)? = null,
 ) {
     val episode = row.episode
     val colors = MaterialTheme.colorScheme
@@ -168,6 +175,11 @@ fun EpisodeItem(
                 PlayPill(row, isCurrent, isPlaying, showArtworkUrl, onClick = if (isPlaying) onPause else onPlay)
                 Spacer(Modifier.width(6.dp))
                 downloadControl?.invoke(Modifier.size(RowControlSize))
+                if (onToggleComplete != null) {
+                    IconButton(onClick = onToggleComplete, modifier = Modifier.size(RowControlSize)) {
+                        CompleteGlyph(row.played, if (row.played) "Mark not complete" else "Mark complete")
+                    }
+                }
             }
         }
     }
@@ -351,6 +363,22 @@ private fun PlayPill(row: EpisodeRow, isCurrent: Boolean, isPlaying: Boolean, co
         }
     }
 }
+
+/** A check in the download control's circles: outlined until complete, then filled with the check knocked out. */
+@Composable
+private fun CompleteGlyph(complete: Boolean, description: String) {
+    val colors = MaterialTheme.colorScheme
+    val ink = colors.onSurface
+    Box(
+        Modifier.size(RowGlyphSize)
+            .then(if (complete) Modifier.background(ink, CircleShape) else Modifier.border(1.dp, colors.outlineVariant, CircleShape)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(Icons.Rounded.Check, description, Modifier.size(RowGlyphSize * 0.62f), tint = if (complete) colors.surface else ink)
+    }
+}
+
+private val RowGlyphSize = 22.dp
 
 /** The description as one paragraph of plain text, for a two-line excerpt. */
 internal fun summaryText(description: String): String = plainText(description).replace(Regex("\\s+"), " ").trim()
