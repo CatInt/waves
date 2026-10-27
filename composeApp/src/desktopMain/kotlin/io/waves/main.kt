@@ -117,7 +117,9 @@ fun main() {
                 val nowPlaying = MacNowPlaying.start(s.state.playback, episodeCover, graph.appScope)
                 onDispose { nowPlaying?.stop() }
             }
-            MenuBar(s.state, onOpenApp = ::showMain)
+            // The show's own cover, as the show page's collapsed chip has; episode artwork is often a wide still.
+            val showCover = remember(s) { currentCoverArt(s.state.playback, graph.http, graph.appScope, preferShow = true) }
+            MenuBar(s.state, showCover, onOpenApp = ::showMain, onQuit = { quit() })
         }
     }
     shutdown()

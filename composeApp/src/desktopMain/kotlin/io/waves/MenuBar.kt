@@ -14,12 +14,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.rememberWindowState
+import io.waves.player.CoverArt
 import io.waves.ui.AppState
 import io.waves.ui.MenuBarPanel
 import io.waves.ui.WavesTheme
-import io.waves.ui.formatDuration
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapLatest
+import kotlinx.coroutines.withContext
 import java.awt.GraphicsEnvironment
 import java.awt.MouseInfo
 import java.awt.Point
@@ -39,16 +44,17 @@ private val menuBarSupported: Boolean =
     System.getProperty("os.name").orEmpty().startsWith("Mac") && SystemTray.isSupported()
 
 /**
- * macOS menu bar item: a pill showing the playback time. Clicking it toggles a popover with the
- * transport controls and Home's "Up next" list.
+ * macOS menu bar item: a pill of [cover], the playing show's artwork, dimmed while paused. Clicking it toggles a
+ * popover with the transport controls and Home's "Up next" list.
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 @Composable
-internal fun MenuBar(app: AppState, onOpenApp: () -> Unit) {
+internal fun MenuBar(app: AppState, cover: StateFlow<CoverArt?>, onOpenApp: () -> Unit, onQuit: () -> Unit) {
     if (!menuBarSupported) return
     var popover by remember { mutableStateOf<WindowPosition?>(null) }
     val dismissedAt = remember { longArrayOf(0L) }
     val tray = remember {
-        TrayIcon(MenuBarPill.image(PillContent("Waves", playing = false))).apply {
+        TrayIcon(MenuBarPill.image(PillContent())).apply {
             isImageAutoSize = false
             toolTip = "Waves"
         }
@@ -73,15 +79,10 @@ internal fun MenuBar(app: AppState, onOpenApp: () -> Unit) {
     }
 
     LaunchedEffect(tray) {
-        app.playback.state.map { s ->
-            val episode = s.episode
-            PillContent(
-                text = episode?.let {
-                    val duration = s.durationMs.takeIf { it > 0 } ?: (it.durationSeconds ?: 0) * 1000L
-                    formatDuration(s.positionMs) + " / " + (if (duration > 0) formatDuration(duration) else "--:--")
-                } ?: "Waves",
-                playing = s.isPlaying,
-            )
+        val pillCover = cover.mapLatest { art -> art?.let { withContext(Dispatchers.Default) { PillCover.decode(it.bytes) } } }
+        combine(app.playback.state, pillCover) { s, artwork ->
+            val loaded = s.episode != null
+            PillContent(cover = artwork.takeIf { loaded }, dimmed = loaded && !s.isPlaying)
         }
             .distinctUntilChanged()
             .collect { tray.image = MenuBarPill.image(it) }
@@ -113,10 +114,17 @@ internal fun MenuBar(app: AppState, onOpenApp: () -> Unit) {
                 onDispose { window.removeWindowFocusListener(focus) }
             }
             WavesTheme(app.artworkColors) {
-                MenuBarPanel(app, onOpenApp = {
-                    popover = null
-                    onOpenApp()
-                })
+                MenuBarPanel(
+                    app,
+                    onOpenApp = {
+                        popover = null
+                        onOpenApp()
+                    },
+                    onQuit = {
+                        popover = null
+                        onQuit()
+                    },
+                )
             }
         }
     }
