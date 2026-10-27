@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
@@ -41,11 +42,12 @@ import io.waves.model.Episode
 import io.waves.model.Podcast
 
 /**
- * The menu bar popover, a pocket version of the app: the Now Playing title chip and transport over the cover's
- * colours, then Home's shelf of shows and its "Up next" list. The chip, covers and show names open the app there.
+ * The menu bar popover, a pocket version of the app: the Now Playing title chip, buttons to open the app and to quit
+ * it, and transport over the cover's colours, then Home's shelf of shows and its "Up next" list. The chip, covers and
+ * show names open the app there.
  */
 @Composable
-internal fun MenuBarPanel(app: AppState, onOpenApp: () -> Unit, modifier: Modifier = Modifier) {
+internal fun MenuBarPanel(app: AppState, onOpenApp: () -> Unit, onQuit: () -> Unit, modifier: Modifier = Modifier) {
     val playback by app.playback.state.collectAsState()
     val podcast by app.playback.podcast.collectAsState()
     val skip by app.playback.skipIntervals.collectAsState()
@@ -82,6 +84,7 @@ internal fun MenuBarPanel(app: AppState, onOpenApp: () -> Unit, modifier: Modifi
                                 modifier = Modifier.weight(1f),
                             )
                             IconButton(onClick = onOpenApp) { Icon(Icons.AutoMirrored.Filled.OpenInNew, "Open Waves") }
+                            IconButton(onClick = onQuit) { Icon(Icons.Default.PowerSettingsNew, "Quit Waves") }
                         }
                         if (episode != null) {
                             ControlPanel(

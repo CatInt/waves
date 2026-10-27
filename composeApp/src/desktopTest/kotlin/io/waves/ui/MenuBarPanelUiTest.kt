@@ -24,7 +24,8 @@ class MenuBarPanelUiTest {
         runBlocking { deps.library.subscribe(show) }
         val app = AppState(deps, deps.appScope)
         var opened = 0
-        setContent { WavesTheme { MenuBarPanel(app, onOpenApp = { opened++ }) } }
+        var quit = 0
+        setContent { WavesTheme { MenuBarPanel(app, onOpenApp = { opened++ }, onQuit = { quit++ }) } }
 
         onNodeWithText("Nothing playing").assertExists()
         waitFor("an episode") {
@@ -46,5 +47,9 @@ class MenuBarPanelUiTest {
         onAllNodesWithText("Signal & Waves").onLast().performClick()
         assertEquals(Screen.PodcastDetail(show, autoFetch = false), app.navigator.current)
         assertEquals(3, opened)
+
+        assertEquals(0, quit)
+        onNodeWithContentDescription("Quit Waves").performClick()
+        assertEquals(1, quit)
     }
 }

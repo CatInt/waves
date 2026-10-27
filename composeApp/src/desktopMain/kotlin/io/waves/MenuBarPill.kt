@@ -4,44 +4,73 @@ import java.awt.AlphaComposite
 import java.awt.BasicStroke
 import java.awt.Color
 import java.awt.GradientPaint
-import java.awt.Font
-import java.awt.FontMetrics
 import java.awt.Graphics2D
-import java.awt.GraphicsEnvironment
 import java.awt.Image
 import java.awt.RenderingHints
+import io.waves.ui.cropBias
+import io.waves.ui.detailFocus
+import io.waves.ui.rowDetail
+import java.awt.geom.AffineTransform
 import java.awt.geom.Path2D
 import java.awt.geom.Rectangle2D
 import java.awt.geom.RoundRectangle2D
 import java.awt.image.BaseMultiResolutionImage
 import java.awt.image.BufferedImage
-import kotlin.math.ceil
+import java.io.ByteArrayInputStream
+import javax.imageio.ImageIO
 import kotlin.math.max
-import kotlin.math.roundToInt
-
-/** What the menu bar pill shows: [text] is the playback time ("12:34 / 45:00"), or the app name when idle. */
-internal data class PillContent(
-    val text: String,
-    val playing: Boolean,
-)
 
 /**
- * Draws the menu bar item in the app icon's style: a soft blue rounded rectangle with the icon's white wave lines
- * faintly behind a play/pause glyph and the playback time. Digits are set in fixed-width slots so the time doesn't
- * jiggle or resize the pill as it ticks. Sizes are in points; [image] bundles 1x and 2x renderings for Retina.
+ * What the menu bar pill shows: [cover], the playing show's cover, or the app icon's waves without one; [dimmed]
+ * while that show is paused.
+ */
+internal data class PillContent(
+    val cover: PillCover? = null,
+    val dimmed: Boolean = false,
+)
+
+/** A cover ready for the pill: shrunk to about the pill's width, with how much detail each of its rows holds. */
+internal class PillCover private constructor(val image: BufferedImage, val rows: FloatArray) {
+    companion object {
+        /** Image files ImageIO can read (JPEG, PNG, GIF, BMP); null for anything else. Slow: call off the UI thread. */
+        fun decode(bytes: ByteArray): PillCover? =
+            runCatching { ImageIO.read(ByteArrayInputStream(bytes)) }.getOrNull()?.let(::of)
+
+        fun of(source: BufferedImage): PillCover {
+            val width = minOf(source.width, COVER_WIDTH)
+            val height = maxOf(1, (source.height.toLong() * width / source.width).toInt())
+            val image = BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB)
+            image.createGraphics().apply {
+                drawImage(source.getScaledInstance(width, height, Image.SCALE_AREA_AVERAGING), 0, 0, null)
+                dispose()
+            }
+            val argb = image.getRGB(0, 0, width, height, null, 0, width)
+            return PillCover(image, rowDetail(argb, width, height))
+        }
+
+        /** Twice the pill's width, for Retina. */
+        private const val COVER_WIDTH = 2 * MenuBarPill.WIDTH
+    }
+}
+
+/**
+ * Draws the menu bar item as the show page's collapsed cover chip: the playing show's cover filling a rounded
+ * rectangle, cropped around its most detailed band and framed by an inner shadow and a white border, dimmed to black
+ * and white while paused. Without a cover the app icon's blue and white wave lines stand in. Sizes are in points; [image] bundles 1x
+ * and 2x renderings for Retina.
  */
 internal object MenuBarPill {
     /** macOS caps status item images at the bar's thickness minus 1 pt (21 pt on a 22 pt bar), else it rescales. */
     const val HEIGHT = 21
-    private const val CORNER = 6f
-    const val MAX_WIDTH = 120
-    private const val MIN_WIDTH = 2 * HEIGHT
-    private const val TEXT_START = 21f
-    private const val END_PADDING = 10f
-    /** The icon tile's blue, and a deeper shade of it along the bottom and for the outline. */
+    /** The show page chip's proportions (160 by 52 dp, corners 16, shadow 3 and border 2), nudged up where they'd vanish at this size. */
+    const val WIDTH = 64
+    private const val CORNER = 6.5f
+    private const val SHADOW_DEPTH = 1.5f
+    private const val BORDER = 1f
+    /** The icon tile's blue. */
     private val Blue = Color(0x76, 0xA2, 0xE1)
-    private val DeepBlue = Color(0x3D, 0x7A, 0xC8)
     private const val LINE_ALPHA = 0.38f
+    private val PausedDim = Color(0, 0, 0, 150)
     /** The icon's 1024 canvas: the band from [ART_TOP] to [ART_BOTTOM] fills the pill's height, its right end at [ART_RIGHT]. */
     private const val ART_TOP = 420f
     private const val ART_BOTTOM = 880f
@@ -57,64 +86,34 @@ internal object MenuBarPill {
         }.getOrNull().orEmpty()
     }
 
-    private val font: Font by lazy {
-        val families = runCatching { GraphicsEnvironment.getLocalGraphicsEnvironment().availableFontFamilyNames.toSet() }
-            .getOrDefault(emptySet())
-        val family = listOf("SF Pro Text", "Helvetica Neue").firstOrNull { it in families } ?: Font.SANS_SERIF
-        Font(family, Font.PLAIN, 12).deriveFont(12.5f)
-    }
+    fun image(content: PillContent): Image =
+        BaseMultiResolutionImage(render(content, 1), render(content, 2))
 
-    private val metrics: FontMetrics by lazy {
-        val scratch = BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB).createGraphics()
-        try {
-            scratch.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_ON)
-            scratch.getFontMetrics(font)
-        } finally {
-            scratch.dispose()
-        }
-    }
-
-    private val digitWidth: Int by lazy { ('0'..'9').maxOf { metrics.charWidth(it) } }
-
-    /** Digits one by one, everything else as runs so it keeps its kerning. */
-    private fun runs(text: String): List<String> = Regex("\\d|\\D+").findAll(text).map { it.value }.toList()
-
-    private fun advance(run: String) = if (run[0].isDigit()) digitWidth else metrics.stringWidth(run)
-
-    fun width(text: String): Int =
-        ceil(TEXT_START + runs(text).sumOf { advance(it) } + END_PADDING).toInt().coerceIn(MIN_WIDTH, MAX_WIDTH)
-
-    fun image(content: PillContent): Image {
-        val width = width(content.text)
-        return BaseMultiResolutionImage(render(content, width, 1), render(content, width, 2))
-    }
-
-    fun render(content: PillContent, width: Int, scale: Int): BufferedImage {
-        val image = BufferedImage(width * scale, HEIGHT * scale, BufferedImage.TYPE_INT_ARGB)
+    fun render(content: PillContent, scale: Int): BufferedImage {
+        val image = BufferedImage(WIDTH * scale, HEIGHT * scale, BufferedImage.TYPE_INT_ARGB)
         val g = image.createGraphics()
         try {
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-            g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
-            g.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_ON)
             g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR)
             g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY)
             g.scale(scale.toDouble(), scale.toDouble())
-            val w = width.toFloat()
+            val w = WIDTH.toFloat()
             val h = HEIGHT.toFloat()
 
-            g.paint = GradientPaint(0f, 0f, Blue, 0f, h, Color(0x5E, 0x92, 0xD8))
-            g.fill(Rectangle2D.Float(0f, 0f, w, h))
-            drawWaves(g, w, h)
-
-            drawGlyph(g, content.playing, h, Color(DeepBlue.red, DeepBlue.green, DeepBlue.blue, 150), offset = 0.5f)
-            drawGlyph(g, content.playing, h, Color.WHITE, offset = 0f)
-            g.font = font
-            val baseline = (h - metrics.ascent - metrics.descent) / 2f + metrics.ascent - 0.5f
-            g.color = Color(DeepBlue.red, DeepBlue.green, DeepBlue.blue, 150)
-            drawTabular(g, content.text, TEXT_START, baseline + 0.5f)
-            g.color = Color.WHITE
-            drawTabular(g, content.text, TEXT_START, baseline)
-            drawBorder(g, w, h)
+            val cover = content.cover
+            if (cover != null) {
+                drawCover(g, cover, w, h)
+            } else {
+                g.paint = GradientPaint(0f, 0f, Blue, 0f, h, Color(0x5E, 0x92, 0xD8))
+                g.fill(Rectangle2D.Float(0f, 0f, w, h))
+                drawWaves(g, w, h)
+            }
+            if (content.dimmed) {
+                desaturate(image)
+                g.color = PausedDim
+                g.fill(Rectangle2D.Float(0f, 0f, w, h))
+            }
+            drawFrame(g, w, h)
         } finally {
             g.dispose()
         }
@@ -137,45 +136,49 @@ internal object MenuBarPill {
         g.transform = saved
     }
 
-    /** A deeper blue outline with a hairline highlight inside it along the top. */
-    private fun drawBorder(g: Graphics2D, w: Float, h: Float) {
-        val line = 0.75f
-        g.stroke = BasicStroke(line)
-        g.color = Color(DeepBlue.red, DeepBlue.green, DeepBlue.blue, 220)
-        g.draw(RoundRectangle2D.Float(line / 2, line / 2, w - line, h - line, 2 * CORNER - line, 2 * CORNER - line))
-        val rim = 0.5f
-        val inset = line + rim / 2
-        g.stroke = BasicStroke(rim)
-        g.paint = GradientPaint(0f, 0f, Color(255, 255, 255, 110), 0f, h / 2, Color(255, 255, 255, 0))
-        g.draw(RoundRectangle2D.Float(inset, inset, w - 2 * inset, h - 2 * inset, 2 * (CORNER - inset), 2 * (CORNER - inset)))
+    /** [cover] filling the pill, its width spanning it and the band of it with the most detail showing. */
+    private fun drawCover(g: Graphics2D, cover: PillCover, w: Float, h: Float) {
+        val image = cover.image
+        val scale = max(w / image.width, h / image.height)
+        val drawn = image.height * scale
+        val band = (h / drawn).coerceIn(0f, 1f)
+        val bias = cropBias(detailFocus(cover.rows, band), band)
+        val x = (w - image.width * scale) / 2f
+        val y = (h - drawn) * (bias + 1f) / 2f
+        g.drawImage(image, AffineTransform(scale, 0f, 0f, scale, x, y), null)
     }
 
-    private fun drawGlyph(g: Graphics2D, playing: Boolean, h: Float, color: Color, offset: Float) {
-        g.color = color
-        val size = 9f
-        val top = (h - size) / 2f + offset
-        if (playing) {
-            val bar = 2.4f
-            g.fill(RoundRectangle2D.Float(8.5f, top, bar, size, 1f, 1f))
-            g.fill(RoundRectangle2D.Float(8.5f + bar + 2.2f, top, bar, size, 1f, 1f))
-        } else {
-            g.fill(Path2D.Float().apply {
-                moveTo(9.0, top.toDouble())
-                lineTo(9.0 + size * 0.9, top + size / 2.0)
-                lineTo(9.0, (top + size).toDouble())
-                closePath()
-            })
+    /**
+     * The show page chip's frame: an inner shadow darkening in from the edges, then a white border. Concentric strokes
+     * fading inward stand in for a blurred shadow.
+     */
+    private fun drawFrame(g: Graphics2D, w: Float, h: Float) {
+        val steps = 6
+        val step = SHADOW_DEPTH / steps
+        g.stroke = BasicStroke(step)
+        for (i in 0 until steps) {
+            val inset = i * step + step / 2
+            val falloff = 1f - i / steps.toFloat()
+            g.color = Color(0f, 0f, 0f, 0.22f * falloff * falloff)
+            val arc = 2 * (CORNER - inset).coerceAtLeast(0f)
+            g.draw(RoundRectangle2D.Float(inset, inset, w - 2 * inset, h - 2 * inset, arc, arc))
         }
+        // Centred on the edge at twice the width: the pill mask trims the outer half, and the white covers the edge's
+        // anti-aliasing so no sliver of the cover shows at the corners.
+        g.stroke = BasicStroke(2 * BORDER)
+        g.color = Color(255, 255, 255, 230)
+        g.draw(RoundRectangle2D.Float(0f, 0f, w, h, 2 * CORNER, 2 * CORNER))
     }
 
-    /** Draws [text] with each digit centred in a slot as wide as the widest digit. */
-    private fun drawTabular(g: Graphics2D, text: String, x: Float, baseline: Float) {
-        var pen = x
-        for (run in runs(text)) {
-            val slot = advance(run)
-            g.drawString(run, pen + (slot - metrics.stringWidth(run)) / 2f, baseline)
-            pen += slot
+    /** Turns [image] to greys of the same brightness, keeping its alpha. */
+    private fun desaturate(image: BufferedImage) {
+        val argb = image.getRGB(0, 0, image.width, image.height, null, 0, image.width)
+        for (i in argb.indices) {
+            val p = argb[i]
+            val luma = (0.299f * ((p shr 16) and 0xFF) + 0.587f * ((p shr 8) and 0xFF) + 0.114f * (p and 0xFF)).toInt()
+            argb[i] = (p and 0xFF000000.toInt()) or (luma shl 16) or (luma shl 8) or luma
         }
+        image.setRGB(0, 0, image.width, image.height, argb, 0, image.width)
     }
 
     /** Shape clips aren't antialiased in Java2D, so the rounded corners come from compositing an antialiased mask. */
