@@ -166,6 +166,7 @@ fun WavesApp(deps: AppDependencies, app: AppState = remember(deps) { AppState(de
     WavesTheme(app.artworkColors) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val isLandscape = maxWidth > maxHeight
+            val inset = contentInset(maxWidth, isLandscape)
             val expanded = nav.current == Screen.NowPlaying
             val playback by app.playback.state.collectAsState()
             val playingPodcast by app.playback.podcast.collectAsState()
@@ -206,6 +207,7 @@ fun WavesApp(deps: AppDependencies, app: AppState = remember(deps) { AppState(de
                     LocalBottomClearance provides clearance,
                     LocalPlayerColors provides playerColors,
                     LocalIsLandscapeLayout provides isLandscape,
+                    LocalContentInset provides inset,
                     LocalCoverOrigins provides coverOrigins,
                 ) {
                     val hiddenByPlayer = if (expanded) Modifier.clearAndSetSemantics {} else Modifier

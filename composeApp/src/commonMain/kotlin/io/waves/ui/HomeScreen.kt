@@ -77,7 +77,7 @@ fun HomeScreen(
                         Button(onClick = onDiscover) { Text("Discover podcasts") }
                     }
                 }
-            } else Column(Modifier.adaptiveContentWidth().fillMaxSize()) {
+            } else Column(Modifier.fillMaxSize()) {
                 val pinned = ui.shelf.isNotEmpty()
                 if (pinned) ShowShelf(ui.shelf, onOpenPodcast, Modifier.padding(top = 8.dp, bottom = 4.dp))
                 Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -96,7 +96,7 @@ fun HomeScreen(
                             item {
                                 Text(
                                     it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.padding(horizontal = ScreenGutter),
+                                    modifier = Modifier.contentInset().padding(horizontal = ScreenGutter),
                                 )
                             }
                         }
@@ -111,7 +111,7 @@ fun HomeScreen(
                                     },
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(horizontal = ScreenGutter, vertical = 8.dp),
+                                    modifier = Modifier.contentInset().padding(horizontal = ScreenGutter, vertical = 8.dp),
                                 )
                             }
                         }
@@ -143,9 +143,10 @@ fun HomeScreen(
 @Composable
 private fun ShowShelf(shows: List<Podcast>, onOpenPodcast: (Podcast) -> Unit, modifier: Modifier = Modifier) {
     Column(modifier) {
+        // Scrolls the window's whole width, starting and ending in line with the content column.
         LazyRow(
             modifier = Modifier.horizontalScrollRegion(),
-            contentPadding = PaddingValues(horizontal = 8.dp),
+            contentPadding = PaddingValues(horizontal = 8.dp + LocalContentInset.current),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             items(shows, key = { it.feedUrl }) { podcast ->

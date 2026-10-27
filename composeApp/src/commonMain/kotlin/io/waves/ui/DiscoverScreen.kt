@@ -46,11 +46,11 @@ fun DiscoverScreen(state: DiscoverState, onOpenPodcast: (Podcast) -> Unit) {
         topBar = { WavesTopBar("Discover", icon = Tab.Discover.icon) },
         contentWindowInsets = WindowInsets(0),
     ) { padding ->
-        Column(Modifier.padding(padding).adaptiveContentWidth().fillMaxSize()) {
+        Column(Modifier.padding(padding).fillMaxSize()) {
             OutlinedTextField(
                 value = ui.query,
                 onValueChange = state::onQueryChange,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = ScreenGutter, vertical = 4.dp),
+                modifier = Modifier.fillMaxWidth().contentInset().padding(horizontal = ScreenGutter, vertical = 4.dp),
                 shape = RoundedCornerShape(12.dp),
                 singleLine = true,
                 leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
@@ -73,7 +73,8 @@ private fun SearchResults(ui: DiscoverUiState, onOpenPodcast: (Podcast) -> Unit)
         ui.searchError != null -> Centered { Text(ui.searchError, color = MaterialTheme.colorScheme.error) }
         ui.results.isEmpty() -> Centered { Text("No podcasts found") }
         else -> LazyVerticalGrid(
-            columns = GridCells.Adaptive(360.dp),
+            // Spanning a landscape window, rows keep to the centred content column, which takes one.
+            columns = if (LocalIsLandscapeLayout.current) GridCells.Fixed(1) else GridCells.Adaptive(360.dp),
             contentPadding = listContentPadding(),
             modifier = Modifier.fillMaxSize().verticalFadingEdge(bottomFadeLength = floatingBarBottomGap()),
         ) {
@@ -85,6 +86,7 @@ private fun SearchResults(ui: DiscoverUiState, onOpenPodcast: (Podcast) -> Unit)
                             anchor.mark()
                             onOpenPodcast(podcast)
                         }
+                        .contentInset()
                         .padding(horizontal = ScreenGutter, vertical = ListRowVerticalPadding),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(ListRowGap),
@@ -110,7 +112,7 @@ private fun TopCharts(ui: DiscoverUiState, state: DiscoverState, onOpenPodcast: 
                 TextButton(onClick = state::loadTopCharts) { Text("Retry") }
             }
         }
-        else -> PodcastGrid(podcasts = ui.topPodcasts, onClick = onOpenPodcast)
+        else -> PodcastGrid(podcasts = ui.topPodcasts, onClick = onOpenPodcast, modifier = Modifier.contentInset())
     }
 }
 
