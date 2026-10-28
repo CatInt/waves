@@ -25,29 +25,28 @@ import kotlinx.coroutines.coroutineScope
 class YoutubeFeedRepository(private val client: HttpClient) : FeedRepository {
     private val rss = RssFeedRepository(client)
     private val channels = YoutubeChannels(client)
-    private val playlists = YoutubePlaylists(client, channels)
+    private val web = YoutubeWebFeed(channels)
+    private val playlists = YoutubePlaylists(client, channels, web)
 
     /**
      * The subscription stays keyed by the channel feed URL, but episodes come from the channel's regular uploads
-     * so Shorts stay out. A channel with no regular videos falls back to its channel feed, minus Shorts.
+     * so Shorts stay out. A channel with no regular videos falls back to its channel feed, minus Shorts. When the
+     * Atom feeds fail, the Videos tab stands in for them ([YoutubeWebFeed]).
      */
     override suspend fun fetch(feedUrl: String): Feed {
         YoutubeUrls.playlistIdOfFeed(feedUrl)?.let { return playlists.feed(feedUrl, it) }
         val channelId = YoutubeUrls.channelIdOfFeed(feedUrl) ?: return rss.fetch(feedUrl)
-        val uploads = download(feedUrl, YoutubeUrls.uploadsFeedUrl(channelId))
-        val parsed = if (uploads != null) {
-            // The playlist feed is titled "Videos"; its author is the channel.
-            YoutubeFeedParser.parse(feedUrl, uploads).let { feed ->
-                feed.copy(podcast = feed.podcast.copy(title = feed.podcast.author ?: feed.podcast.title, author = null))
-            }
-        } else {
-            val xml = download(feedUrl, YoutubeUrls.feedUrl(channelId))
-                ?: throw FeedFetchException("Failed to download $feedUrl: HTTP 404")
-            YoutubeFeedParser.parse(feedUrl, xml)
+        var fromAtom = true
+        val parsed = try {
+            atomFeed(feedUrl, channelId)
+        } catch (e: FeedFetchException) {
+            fromAtom = false
+            channels.videosTab(channelId)?.let { web.feed(feedUrl, parseListedVideos(it)) } ?: throw e
         }
         val (meta, durations) = coroutineScope {
             val meta = async { metadataOrNull(channelId) }
-            val durations = async { durations(channelId, parsed) }
+            // The Videos tab already gave the stand-in its lengths.
+            val durations = async { if (fromAtom) durations(channelId, parsed) else emptyMap() }
             meta.await() to durations.await()
         }
         return parsed.copy(
@@ -56,6 +55,19 @@ class YoutubeFeedRepository(private val client: HttpClient) : FeedRepository {
                 if (e.durationSeconds != null) e else e.copy(durationSeconds = durations[e.guid])
             },
         )
+    }
+
+    private suspend fun atomFeed(feedUrl: String, channelId: String): Feed {
+        val uploads = download(feedUrl, YoutubeUrls.uploadsFeedUrl(channelId))
+        if (uploads != null) {
+            // The playlist feed is titled "Videos"; its author is the channel.
+            return YoutubeFeedParser.parse(feedUrl, uploads).let { feed ->
+                feed.copy(podcast = feed.podcast.copy(title = feed.podcast.author ?: feed.podcast.title, author = null))
+            }
+        }
+        val xml = download(feedUrl, YoutubeUrls.feedUrl(channelId))
+            ?: throw FeedFetchException("Failed to download $feedUrl: HTTP 404")
+        return YoutubeFeedParser.parse(feedUrl, xml)
     }
 
     /**

@@ -322,6 +322,109 @@ class YoutubeChannelsTest {
         ]}}}}]}}}
     """.trimIndent()
 
+    @Test
+    fun whenTheAtomFeedsFailTheVideosTabStandsIn() = runTest {
+        val stored = YoutubeUrls.feedUrl(channel)
+        val client = HttpClient(MockEngine { req ->
+            val body = (req.body as? TextContent)?.text.orEmpty()
+            when {
+                req.url.encodedPath.endsWith("/feeds/videos.xml") -> respond("down", HttpStatusCode.InternalServerError)
+                req.url.encodedPath.endsWith("/browse") && "params" in body -> respond(WEB_VIDEOS_TAB, HttpStatusCode.OK, jsonHeaders)
+                req.url.encodedPath.endsWith("/browse") -> respond(BROWSE, HttpStatusCode.OK, jsonHeaders)
+                req.url.encodedPath.endsWith("/player") && "abcdefghijk" in body -> respond(
+                    """{"videoDetails":{"videoId":"abcdefghijk","lengthSeconds":"2603","author":"Example Channel",
+                       "shortDescription":"All about it"},
+                       "microformat":{"playerMicroformatRenderer":{"publishDate":"2026-10-26T19:16:44-07:00"}}}""",
+                    HttpStatusCode.OK, jsonHeaders,
+                )
+                else -> respond("no", HttpStatusCode.NotFound)
+            }
+        })
+        val before = io.waves.currentTimeMillis()
+        val feed = YoutubeFeedRepository(client).fetch(stored)
+        assertEquals("Example Channel", feed.podcast.title)
+        assertEquals("https://yt3.example/big.jpg", feed.podcast.artworkUrl)
+        assertEquals(listOf("abcdefghijk", "lmnopqrstuv"), feed.episodes.map { it.guid })
+        val (first, second) = feed.episodes
+        assertEquals("Hello", first.title)
+        assertEquals(1793067404000L, first.publishedAtEpochMs)
+        assertEquals("All about it", first.description)
+        assertEquals(2603L, first.durationSeconds)
+        assertEquals("https://www.youtube.com/watch?v=abcdefghijk", first.audioUrl)
+        assertEquals("https://i.ytimg.com/vi/abcdefghijk/hqdefault.jpg", first.artworkUrl)
+        assertEquals(stored, first.podcastFeedUrl)
+        // The player didn't answer for this one: dated from "3 days ago", with no description.
+        val threeDays = 3 * 86_400_000L
+        assertTrue(second.publishedAtEpochMs!! in (before - threeDays)..(io.waves.currentTimeMillis() - threeDays))
+        assertEquals(null, second.description)
+        assertEquals(3725L, second.durationSeconds)
+    }
+
+    @Test
+    fun aChannelThatIsGoneStillSaysSo() = runTest {
+        val client = HttpClient(MockEngine { respond("no", HttpStatusCode.NotFound) })
+        val error = assertFailsWith<io.waves.feed.FeedFetchException> {
+            YoutubeFeedRepository(client).fetch(YoutubeUrls.feedUrl(channel))
+        }
+        assertTrue(error.message!!.contains("404"), error.message)
+    }
+
+    @Test
+    fun whenThePlaylistFeedFailsItsPageStandsIn() = runTest {
+        val stored = YoutubeUrls.playlistFeedUrl(PLAYLIST)
+        val page = """
+            {"metadata":{"playlistMetadataRenderer":{"title":"Best Talks","description":"The good ones"}},
+             "sidebar":{"playlistSidebarRenderer":{"items":[{"playlistSidebarSecondaryInfoRenderer":{"videoOwner":{
+               "videoOwnerRenderer":{"title":{"runs":[{"text":"Example Channel",
+                 "navigationEndpoint":{"browseEndpoint":{"browseId":"$channel"}}}]}}}}}]}},
+             "contents":${WEB_VIDEOS_TAB.substringAfter("{\"contents\":").dropLast(1)}}
+        """.trimIndent()
+        val client = HttpClient(MockEngine { req ->
+            val body = (req.body as? TextContent)?.text.orEmpty()
+            when {
+                req.url.encodedPath.endsWith("/feeds/videos.xml") -> respond("no", HttpStatusCode.NotFound)
+                req.url.encodedPath.endsWith("/browse") && "VL$PLAYLIST" in body -> respond(page, HttpStatusCode.OK, jsonHeaders)
+                req.url.encodedPath.endsWith("/browse") && "\"$channel\"" in body -> respond(BROWSE, HttpStatusCode.OK, jsonHeaders)
+                else -> respond("no", HttpStatusCode.NotFound)
+            }
+        })
+        val feed = YoutubeFeedRepository(client).fetch(stored)
+        assertEquals("Best Talks", feed.podcast.title)
+        assertEquals("Example Channel", feed.podcast.author)
+        assertEquals("https://yt3.example/big.jpg", feed.podcast.artworkUrl)
+        assertEquals(listOf("abcdefghijk", "lmnopqrstuv"), feed.episodes.map { it.guid })
+        assertEquals(listOf("Hello", "Second"), feed.episodes.map { it.title })
+
+        val creator = YoutubeChannels(client).creator(stored)!!
+        assertEquals(YoutubeUrls.feedUrl(channel), creator.feedUrl)
+        assertEquals("Example Channel", creator.title)
+    }
+
+    @Test
+    fun agesOnTheVideosTabBecomeTimes() {
+        val now = 10_000_000_000L
+        assertEquals(now - 12 * 3_600_000L, approximateTime("12 hours ago", now))
+        assertEquals(now - 14 * 86_400_000L, approximateTime("Streamed 2 weeks ago", now))
+        assertEquals(now - 30 * 86_400_000L, approximateTime("1 month ago", now))
+        assertEquals(null, approximateTime("Scheduled for 10/30/26", now))
+    }
+
+    private val WEB_VIDEOS_TAB = """
+        {"contents":{"twoColumnBrowseResultsRenderer":{"tabs":[{"tabRenderer":{"content":{"richGridRenderer":{"contents":[
+          {"richItemRenderer":{"content":{"lockupViewModel":{"contentId":"abcdefghijk","contentType":"LOCKUP_CONTENT_TYPE_VIDEO",
+            "contentImage":{"thumbnailViewModel":{
+              "overlays":[{"thumbnailBottomOverlayViewModel":{"badges":[{"thumbnailBadgeViewModel":{"text":"43:23"}}]}}]}},
+            "metadata":{"lockupMetadataViewModel":{"title":{"content":"Hello"},"metadata":{"contentMetadataViewModel":{
+              "metadataRows":[{"metadataParts":[{"text":{"content":"47K views"}},{"text":{"content":"1 day ago"}}]}]}}}}}}}},
+          {"richItemRenderer":{"content":{"lockupViewModel":{"contentId":"PLnotavideo","contentType":"LOCKUP_CONTENT_TYPE_PLAYLIST"}}}},
+          {"richItemRenderer":{"content":{"lockupViewModel":{"contentId":"lmnopqrstuv","contentType":"LOCKUP_CONTENT_TYPE_VIDEO",
+            "contentImage":{"thumbnailViewModel":{
+              "overlays":[{"thumbnailBottomOverlayViewModel":{"badges":[{"thumbnailBadgeViewModel":{"text":"1:02:05"}}]}}]}},
+            "metadata":{"lockupMetadataViewModel":{"title":{"content":"Second"},"metadata":{"contentMetadataViewModel":{
+              "metadataRows":[{"metadataParts":[{"text":{"content":"3 days ago"}}]}]}}}}}}}}
+        ]}}}}]}}}
+    """.trimIndent()
+
     private val ATOM = """
         <feed xmlns:yt="http://www.youtube.com/xml/schemas/2015">
           <title>From atom</title>

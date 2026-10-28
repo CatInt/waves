@@ -138,7 +138,11 @@ class YoutubeChannels(private val client: HttpClient) {
      * Lengths in seconds of the channel's newest regular uploads (about 30, more than the Atom feed's 15), by video
      * ID, from its Videos tab. The feed itself carries no durations. Empty when YouTube doesn't answer.
      */
-    internal suspend fun videoDurations(channelId: String): Map<String, Long> {
+    internal suspend fun videoDurations(channelId: String): Map<String, Long> =
+        videosTab(channelId)?.let(::parseVideoDurations).orEmpty()
+
+    /** The channel's Videos tab, newest first, as `browse` returns it. Null when YouTube doesn't answer. */
+    internal suspend fun videosTab(channelId: String): JsonObject? {
         val body = buildJsonObject {
             putJsonObject("context") { put("client", webClient()) }
             put("browseId", channelId)
@@ -149,16 +153,19 @@ class YoutubeChannels(private val client: HttpClient) {
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            return emptyMap()
+            return null
         }
-        return jsonObject(text)?.let(::parseVideoDurations).orEmpty()
+        return jsonObject(text)
     }
 
     /**
      * One video's length in seconds from the player API, which knows it even while a premiere still plays as live
      * (the Videos tab shows "PREMIERE" then). Null for a stream in progress or when YouTube doesn't answer.
      */
-    internal suspend fun videoLength(videoId: String): Long? {
+    internal suspend fun videoLength(videoId: String): Long? = videoDetails(videoId)?.seconds
+
+    /** One video's publish time, description, length and channel from the player API; null when YouTube doesn't answer. */
+    internal suspend fun videoDetails(videoId: String): VideoDetails? {
         val body = buildJsonObject {
             putJsonObject("context") { put("client", webClient()) }
             put("videoId", videoId)
@@ -170,7 +177,7 @@ class YoutubeChannels(private val client: HttpClient) {
         } catch (e: Exception) {
             return null
         }
-        return jsonObject(text)?.obj("videoDetails")?.string("lengthSeconds")?.toLongOrNull()?.takeIf { it > 0 }
+        return jsonObject(text)?.let(::parseVideoDetails)
     }
 }
 
@@ -186,7 +193,7 @@ internal data class ChannelMetadata(val title: String?, val description: String?
 /** `browse` params that select a channel's Videos tab. */
 private const val VIDEOS_TAB_PARAMS = "EgZ2aWRlb3PyBgQKAjoA"
 
-private val CLOCK_TIME = Regex("""\d{1,2}(:\d{2}){1,2}""")
+internal val CLOCK_TIME = Regex("""\d{1,2}(:\d{2}){1,2}""")
 
 /**
  * Video ID → seconds from a Videos tab `browse` response. Videos come as `lockupViewModel` (the length is the
@@ -220,7 +227,7 @@ internal fun parseVideoDurations(root: JsonElement): Map<String, Long> {
     return out
 }
 
-private fun badgeTexts(node: JsonElement): Sequence<String> = when (node) {
+internal fun badgeTexts(node: JsonElement): Sequence<String> = when (node) {
     is JsonObject -> {
         val own = node.obj("thumbnailBadgeViewModel")?.string("text")
         (if (own != null) sequenceOf(own) else emptySequence()) + node.values.asSequence().flatMap(::badgeTexts)
