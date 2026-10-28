@@ -19,22 +19,28 @@ import kotlinx.serialization.json.putJsonObject
  * made it as the creator, whose avatar is the cover. The subscription is keyed by the playlist's Atom feed URL.
  *
  * The Atom feed lists the playlist's first 15 videos in playlist order, so a playlist that grows at the end
- * (oldest first) stops showing new videos once it has more than 15.
+ * (oldest first) stops showing new videos once it has more than 15. When it fails, the same first videos on the
+ * playlist's page stand in for it ([YoutubeWebFeed]).
  */
 class YoutubePlaylists internal constructor(
     private val client: HttpClient,
     private val channels: YoutubeChannels,
+    private val web: YoutubeWebFeed = YoutubeWebFeed(channels),
 ) {
     constructor(client: HttpClient) : this(client, YoutubeChannels(client))
 
     suspend fun feed(feedUrl: String, playlistId: String): Feed = coroutineScope {
-        val pending = async { details(playlistId) }
-        val xml = client.youtubeFeed(feedUrl, YoutubeUrls.playlistFeedUrl(playlistId))
-            ?: throw FeedFetchException("This YouTube playlist is private or no longer exists")
-        val parsed = YoutubeFeedParser.parse(feedUrl, xml)
-        val owner = YoutubeFeedParser.owner(xml)
+        val pending = async { page(playlistId) }
+        val (parsed, owner) = try {
+            val xml = client.youtubeFeed(feedUrl, YoutubeUrls.playlistFeedUrl(playlistId))
+                ?: throw FeedFetchException("This YouTube playlist is private or no longer exists")
+            YoutubeFeedParser.parse(feedUrl, xml) to YoutubeFeedParser.owner(xml)
+        } catch (e: FeedFetchException) {
+            val page = pending.await() ?: throw e
+            (web.feed(feedUrl, parseListedVideos(page)) ?: throw e) to parsePlaylistOwner(page)
+        }
         val channelArt = async { owner?.let { channels.channelMetadata(it.channelId)?.artworkUrl } }
-        val details = pending.await()
+        val details = pending.await()?.let(::parsePlaylistDetails)
         val known = details?.durations.orEmpty()
         // A premiere still playing as live has no length on the playlist page yet.
         val looked = parsed.episodes.take(PLAYER_LOOKUPS)
@@ -59,16 +65,20 @@ class YoutubePlaylists internal constructor(
         )
     }
 
-    /** The channel that made the playlist, as a show to open. Null when the feed is gone or doesn't say. */
+    /** The channel that made the playlist, as a show to open. Null when neither the feed nor the page says. */
     suspend fun owner(playlistId: String): Podcast? {
         val url = YoutubeUrls.playlistFeedUrl(playlistId)
-        val xml = client.youtubeFeed(url, url) ?: return null
-        val owner = YoutubeFeedParser.owner(xml) ?: return null
+        val fromFeed = try {
+            client.youtubeFeed(url, url)?.let(YoutubeFeedParser::owner)
+        } catch (_: FeedFetchException) {
+            null
+        }
+        val owner = fromFeed ?: page(playlistId)?.let(::parsePlaylistOwner) ?: return null
         return Podcast(feedUrl = YoutubeUrls.feedUrl(owner.channelId), title = owner.name ?: owner.channelId)
     }
 
-    /** Title, cover, description and video lengths from the playlist page. Null when YouTube doesn't answer. */
-    internal suspend fun details(playlistId: String): PlaylistDetails? {
+    /** The playlist's page, as `browse` returns it. Null when YouTube doesn't answer. */
+    private suspend fun page(playlistId: String): JsonObject? {
         val body = buildJsonObject {
             putJsonObject("context") { put("client", webClient()) }
             put("browseId", "VL$playlistId")
@@ -80,7 +90,7 @@ class YoutubePlaylists internal constructor(
         } catch (e: Exception) {
             return null
         }
-        return jsonObject(text)?.let(::parsePlaylistDetails)
+        return jsonObject(text)
     }
 }
 
