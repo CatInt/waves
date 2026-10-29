@@ -7,6 +7,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshState
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -28,6 +30,19 @@ class PullToRefreshUiTest {
         setContent { WavesPullToRefreshBox(isRefreshing = false, onRefresh = { refreshes++ }) { Rows() } }
         wheelPull()
         assertEquals(1, refreshes)
+    }
+
+    @Test
+    fun pullThatRefreshesNothingStillHides() = runComposeUiTest {
+        var refreshes = 0
+        lateinit var state: PullToRefreshState
+        setContent {
+            state = rememberPullToRefreshState()
+            WavesPullToRefreshBox(isRefreshing = false, onRefresh = { refreshes++ }, state = state) { Rows() }
+        }
+        wheelPull()
+        assertEquals(1, refreshes)
+        assertEquals(0f, state.distanceFraction)
     }
 
     @Test
