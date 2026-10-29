@@ -72,6 +72,8 @@ private val RowControlSize = 40.dp
  * @param showDescription false in narrow lists (the menu bar panel) to keep rows short.
  * @param divider draws a hairline above the row; lists pass false for their first row.
  * @param dividerBelow whether the next row draws a divider, so the press ripple reaches down to it.
+ * @param dividerAbove whether the row sits right under a [ListDivider] that stays put (a first row under a pinned
+ *   shelf), so the press ripple reaches up to it.
  * @param onToggleComplete after the download control: marks the episode complete, or once played, not complete.
  */
 @Composable
@@ -91,6 +93,7 @@ fun EpisodeItem(
     showDescription: Boolean = true,
     divider: Boolean = false,
     dividerBelow: Boolean = false,
+    dividerAbove: Boolean = false,
     onToggleComplete: (() -> Unit)? = null,
 ) {
     val episode = row.episode
@@ -102,7 +105,7 @@ fun EpisodeItem(
     Column(
         modifier.fillMaxWidth()
             .topDivider(divider)
-            .zigzagClickable(top = divider, bottom = dividerBelow, onClick = onPlay)
+            .zigzagClickable(top = divider, bottom = dividerBelow, above = dividerAbove && !divider, onClick = onPlay)
             .contentInset()
             // The divider is drawn inside the top padding; without one, content keeps the same distance from
             // whatever line is above the row.
@@ -217,30 +220,34 @@ internal fun Modifier.topDivider(show: Boolean): Modifier {
 /**
  * Clickable whose press ripple is clipped to the zigzag dividers around the row: its top edge follows the row's own
  * divider ([top]) and, with [bottom], it reaches past the row's bottom to follow the next row's divider, so
- * neighbouring ripples meet along the line. Only the row itself takes taps.
+ * neighbouring ripples meet along the line. With [above] (and no divider of its own) it reaches up under a
+ * [ListDivider] just above the row, whose [BelowListDivider] clip cuts it to the line. Only the row itself takes taps.
  */
 @Composable
-internal fun Modifier.zigzagClickable(top: Boolean, bottom: Boolean, onClick: () -> Unit): Modifier {
+internal fun Modifier.zigzagClickable(top: Boolean, bottom: Boolean, above: Boolean = false, onClick: () -> Unit): Modifier {
     val interaction = remember { MutableInteractionSource() }
-    val reach = if (bottom) ZigzagHeight + ZigzagStroke else 0.dp
+    val reach = if (bottom) ListDividerHeight else 0.dp
+    val rise = if (above) ListDividerHeight else 0.dp
     val shape = remember(top, reach) { ZigzagEdgesShape(top, reach) }
     return this
-        // Reports the row's own height while the ripple layer inside runs [reach] further down.
+        // Reports the row's own height while the ripple layer inside runs [rise] further up and [reach] further down.
         .layout { measurable, constraints ->
-            val extra = reach.roundToPx()
+            val up = rise.roundToPx()
+            val extra = up + reach.roundToPx()
             val maxHeight = if (constraints.hasBoundedHeight) constraints.maxHeight + extra else Constraints.Infinity
             val placeable = measurable.measure(constraints.copy(maxHeight = maxHeight))
             layout(placeable.width, (placeable.height - extra).coerceIn(constraints.minHeight, constraints.maxHeight)) {
-                placeable.place(0, 0)
+                placeable.place(0, -up)
             }
         }
         .clip(shape)
         .indication(interaction, ripple(color = MaterialTheme.colorScheme.primary))
         .layout { measurable, constraints ->
-            val extra = reach.roundToPx()
+            val up = rise.roundToPx()
+            val extra = up + reach.roundToPx()
             val maxHeight = if (constraints.hasBoundedHeight) (constraints.maxHeight - extra).coerceAtLeast(0) else Constraints.Infinity
             val placeable = measurable.measure(constraints.copy(minHeight = 0, maxHeight = maxHeight))
-            layout(placeable.width, placeable.height + extra) { placeable.place(0, 0) }
+            layout(placeable.width, placeable.height + extra) { placeable.place(0, up) }
         }
         .clickable(interactionSource = interaction, indication = null, onClick = onClick)
 }
