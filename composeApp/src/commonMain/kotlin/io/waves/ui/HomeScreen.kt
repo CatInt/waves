@@ -157,7 +157,8 @@ private fun ShowShelf(shows: List<Podcast>, onOpenPodcast: (Podcast) -> Unit, mo
     Column(modifier) {
         // Scrolls the window's whole width, starting and ending in line with the content column.
         LazyRow(
-            modifier = Modifier.horizontalScrollRegion(),
+            // Stretches at either end like the app's other lists, without handing the pager the leftover.
+            modifier = Modifier.horizontalScrollRegion().horizontalOverscroll(),
             contentPadding = PaddingValues(horizontal = 8.dp + LocalContentInset.current),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
