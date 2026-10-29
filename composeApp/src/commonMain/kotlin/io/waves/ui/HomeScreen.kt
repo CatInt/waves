@@ -136,6 +136,9 @@ fun HomeScreen(
                                 downloadControl = downloads?.let { d -> { m -> DownloadButton(item.row.episode, d, m, compact = true) } },
                                 divider = index > 0,
                                 dividerBelow = index < ui.upNext.lastIndex,
+                                // Right under the shelf's divider, the first row's ripple fills up to its zigzag, where the
+                                // list's clip cuts it.
+                                dividerAbove = pinned && index == 0 && ui.error == null,
                                 onToggleComplete = onSetCompleted?.let { { it(item.row.episode, !item.row.played) } },
                                 modifier = Modifier.animateItem(),
                             )
