@@ -5,9 +5,15 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshState
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
@@ -29,6 +35,9 @@ import kotlinx.coroutines.withContext
  * [PullToRefreshBox] that a trackpad or mouse wheel can pull too. A list at its top drops the wheel scroll that would
  * pull (it never reaches the pull's nested scroll), and a wheel pull has no finger lift to settle it, so this feeds the
  * pull the wheel scroll the list leaves over and lets go once the wheel goes quiet.
+ *
+ * Material leaves a released pull where it is until [isRefreshing] turns on, so a pull whose [onRefresh] does nothing
+ * (offline, sync rate-limited) or is over before the next frame spins for [MinSpinMillis] and then hides.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -36,12 +45,29 @@ fun WavesPullToRefreshBox(
     isRefreshing: Boolean,
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier,
+    state: PullToRefreshState = rememberPullToRefreshState(),
     content: @Composable BoxScope.() -> Unit,
 ) {
-    PullToRefreshBox(isRefreshing = isRefreshing, onRefresh = onRefresh, modifier = modifier) {
+    var pulled by remember { mutableStateOf(false) }
+    LaunchedEffect(pulled, isRefreshing) {
+        if (!pulled) return@LaunchedEffect
+        if (!isRefreshing) delay(MinSpinMillis)
+        pulled = false
+    }
+    PullToRefreshBox(
+        isRefreshing = isRefreshing || pulled,
+        onRefresh = {
+            pulled = true
+            onRefresh()
+        },
+        modifier = modifier,
+        state = state,
+    ) {
         Box(Modifier.fillMaxSize().wheelPull(), content = content)
     }
 }
+
+private const val MinSpinMillis = 500L
 
 /** Scroll per wheel unit, as on macOS (a notch, or a trackpad's precise delta). */
 private val WheelStep = 10.dp
