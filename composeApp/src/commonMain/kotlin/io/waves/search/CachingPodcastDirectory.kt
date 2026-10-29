@@ -3,8 +3,10 @@ package io.waves.search
 import io.waves.currentTimeMillis
 import io.waves.model.Podcast
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -85,7 +87,7 @@ class CachingPodcastDirectory(
         }
         store?.let { s ->
             try {
-                s.write(key, json.encodeToString(StoredChart(entry.at, top)))
+                s.write(key, withContext(Dispatchers.Default) { json.encodeToString(StoredChart(entry.at, top)) })
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
@@ -117,7 +119,9 @@ class CachingPodcastDirectory(
         } catch (_: Exception) {
             null
         } ?: return null
-        val stored = runCatching { json.decodeFromString<StoredChart>(text) }.getOrNull() ?: return null
+        // Off the main thread, like the encoding: a stored chart runs to tens of KB.
+        val stored = withContext(Dispatchers.Default) { runCatching { json.decodeFromString<StoredChart>(text) }.getOrNull() }
+            ?: return null
         remember(stored.podcasts, stored.at)
         return Entry(stored.podcasts, stored.at)
     }

@@ -3,12 +3,15 @@ package io.waves.sync
 import io.waves.currentTimeMillis
 import io.waves.data.LibraryRepository
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlin.coroutines.CoroutineContext
 
 /**
  * Read remote → merge with local → write remote (optimistic, retried on [ConflictException]) → merge into local.
@@ -20,6 +23,8 @@ class DefaultSyncService(
     private val fileName: String = DEFAULT_FILE_NAME,
     private val maxAttempts: Int = 3,
     private val clock: () -> Long = ::currentTimeMillis,
+    /** Where decoding, merging and encoding run: off the main thread, which a large library would stall. */
+    private val workContext: CoroutineContext = Dispatchers.Default,
 ) : SyncService {
 
     private val _status = MutableStateFlow<SyncStatus>(SyncStatus.Idle)
@@ -30,7 +35,7 @@ class DefaultSyncService(
     override suspend fun syncNow() = mutex.withLock {
         _status.value = SyncStatus.Syncing
         _status.value = try {
-            runSync()
+            withContext(workContext) { runSync() }
             SyncStatus.Done(clock())
         } catch (e: CancellationException) {
             _status.value = SyncStatus.Idle

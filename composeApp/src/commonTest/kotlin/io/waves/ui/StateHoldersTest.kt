@@ -22,6 +22,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
+import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.test.Test
 import kotlin.time.Duration.Companion.minutes
 import kotlin.test.assertEquals
@@ -264,7 +265,7 @@ class HomeStateTest {
         library.subscribe(podcastA)
         library.subscribe(podcastB)
         val feeds = MapFeedRepository(mapOf(podcastA.feedUrl to Feed(podcastA, listOf(episode(podcastA, 1)))))
-        val s = HomeState(library, feeds, backgroundScope)
+        val s = HomeState(library, feeds, backgroundScope, workContext = EmptyCoroutineContext)
         settle()
         assertEquals(listOf("Alpha Show", "Beta Cast"), s.state.value.subscriptions.map { it.title })
 

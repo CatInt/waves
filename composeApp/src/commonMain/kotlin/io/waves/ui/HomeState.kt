@@ -12,6 +12,7 @@ import io.waves.offline.offlinePlayableIds
 import io.waves.refresh.FeedRefresher
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -25,12 +26,15 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
+import kotlin.coroutines.CoroutineContext
 
 data class HomeUiState(
     /** Alphabetical. */
@@ -79,6 +83,11 @@ class HomeState(
     /** Whole-file playback cache (listened for a minute), separate from explicit downloads. */
     private val cachedEpisodeIds: Flow<Set<EpisodeId>> = flowOf(emptySet()),
     private val onEpisodesAbsent: (Set<EpisodeId>) -> Unit = {},
+    /**
+     * Where ranking and episode bookkeeping run: off the main thread. A refresh lands one show at a time, and
+     * re-ranking every episode on each would stutter the pull's spinner.
+     */
+    private val workContext: CoroutineContext = Dispatchers.Default,
 ) {
     private val refreshing = MutableStateFlow(false)
     private val error = MutableStateFlow<String?>(null)
@@ -135,7 +144,7 @@ class HomeState(
                 upNext = UpNextRanking.rank(subs + others.keys, visible, byId, history, now, limit = upNextLimit, downloaded = downloaded),
                 hasEpisodes = subscribed.values.any { it.isNotEmpty() },
             )
-        }.stateIn(scope, SharingStarted.Eagerly, null)
+        }.flowOn(workContext).stateIn(scope, SharingStarted.Eagerly, null)
 
     val state: StateFlow<HomeUiState> =
         combine(ranked, refreshing, error, offline, orderEpoch) { r, refreshing, e, off, epoch ->
@@ -182,10 +191,13 @@ class HomeState(
                         async {
                             gate.withPermit {
                                 try {
-                                    val known = library.episodes(podcast.feedUrl).first().mapTo(HashSet()) { it.guid }
-                                    val feed = feeds.fetch(podcast.feedUrl)
-                                    library.upsertEpisodes(podcast.feedUrl, feed.episodes)
-                                    onEpisodesAbsent(FeedRefresher.absentEpisodeIds(podcast.feedUrl, known, feed.episodes))
+                                    val absent = withContext(workContext) {
+                                        val known = library.episodes(podcast.feedUrl).first().mapTo(HashSet()) { it.guid }
+                                        val feed = feeds.fetch(podcast.feedUrl)
+                                        library.upsertEpisodes(podcast.feedUrl, feed.episodes)
+                                        FeedRefresher.absentEpisodeIds(podcast.feedUrl, known, feed.episodes)
+                                    }
+                                    onEpisodesAbsent(absent)
                                     null
                                 } catch (e: CancellationException) {
                                     throw e

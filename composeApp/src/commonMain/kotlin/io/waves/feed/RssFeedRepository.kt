@@ -7,6 +7,8 @@ import io.ktor.client.statement.bodyAsBytes
 import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /** Thrown when a feed cannot be downloaded. */
 class FeedFetchException(message: String, cause: Throwable? = null) : Exception(message, cause)
@@ -28,8 +30,10 @@ class RssFeedRepository(private val client: HttpClient) : FeedRepository {
             throw FeedFetchException("Failed to download $feedUrl: HTTP ${response.status.value}")
         }
         val bytes = response.bodyAsBytes()
-        val xml = decode(bytes, response.contentType()?.parameter("charset"))
-        return FeedParser.parse(feedUrl, xml)
+        // Off the main thread: feeds run to megabytes, and Home refreshes every show at once.
+        return withContext(Dispatchers.Default) {
+            FeedParser.parse(feedUrl, decode(bytes, response.contentType()?.parameter("charset")))
+        }
     }
 
     internal companion object {
