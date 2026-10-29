@@ -254,6 +254,31 @@ class PullToRefreshUiTest {
     }
 
     @Test
+    fun gapInContentOpensWhereThePullGapIs() = runComposeUiTest {
+        var refreshing by mutableStateOf(false)
+        setContent {
+            WavesPullToRefreshBox(isRefreshing = refreshing, onRefresh = { refreshing = true }, gapInContent = true) {
+                LazyColumn(Modifier.fillMaxSize().testTag("list")) {
+                    item { Text("Header", Modifier.fillMaxWidth().height(100.dp)) }
+                    item { PullGap() }
+                    items(30) { Text("Row $it", Modifier.fillMaxWidth().height(48.dp)) }
+                }
+            }
+        }
+        val header = onNodeWithText("Header").getBoundsInRoot().top
+        val row = onNodeWithText("Row 0").getBoundsInRoot().top
+        wheelPull()
+        assertTrue(refreshing)
+        // The header holds still; the rows under the gap sit a whole threshold lower while refreshing.
+        assertEquals(header.value, onNodeWithText("Header").getBoundsInRoot().top.value, 0.5f)
+        val dropped = (onNodeWithText("Row 0").getBoundsInRoot().top - row).value
+        assertEquals(PullToRefreshDefaults.PositionalThreshold.value, dropped, 1f)
+        refreshing = false
+        repeat(20) { mainClock.advanceTimeBy(100) }
+        assertEquals(row.value, onNodeWithText("Row 0").getBoundsInRoot().top.value, 0.5f)
+    }
+
+    @Test
     fun pullStopsAtTheRefreshThreshold() = runComposeUiTest {
         lateinit var state: PullToRefreshState
         setContent {
