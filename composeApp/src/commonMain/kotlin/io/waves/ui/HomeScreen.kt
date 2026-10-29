@@ -94,16 +94,17 @@ fun HomeScreen(
                         // Under the shelf, rows start below its divider.
                         contentPadding = listContentPadding(top = if (pinned) ListDividerHeight else 0.dp),
                     ) {
+                        // Rows coming and going (new episodes, finished ones) fade while the rest slide to make room.
                         ui.error?.let {
-                            item {
+                            item(key = "error") {
                                 Text(
                                     it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.contentInset().padding(horizontal = ScreenGutter),
+                                    modifier = Modifier.animateItem().contentInset().padding(horizontal = ScreenGutter),
                                 )
                             }
                         }
                         if (ui.upNext.isEmpty()) {
-                            item {
+                            item(key = "status") {
                                 Text(
                                     when {
                                         ui.offline && ui.loaded && !ui.refreshing -> "No downloaded or fully cached episodes."
@@ -113,7 +114,7 @@ fun HomeScreen(
                                     },
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.contentInset().padding(horizontal = ScreenGutter, vertical = 8.dp),
+                                    modifier = Modifier.animateItem().contentInset().padding(horizontal = ScreenGutter, vertical = 8.dp),
                                 )
                             }
                         }
@@ -132,6 +133,7 @@ fun HomeScreen(
                                 divider = index > 0,
                                 dividerBelow = index < ui.upNext.lastIndex,
                                 onToggleComplete = onSetCompleted?.let { { it(item.row.episode, !item.row.played) } },
+                                modifier = Modifier.animateItem(),
                             )
                         }
                     }
