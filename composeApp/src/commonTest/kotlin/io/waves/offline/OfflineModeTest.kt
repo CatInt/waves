@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -97,6 +98,7 @@ class OfflineModeTest {
             downloads = downloads,
             playbackCache = cache,
             onEpisodesAbsent = { absent += it },
+            workContext = EmptyCoroutineContext,
         )
         settle()
         assertTrue(home.state.value.offline)

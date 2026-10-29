@@ -7,7 +7,9 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.isSuccess
 import io.waves.model.Podcast
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -84,10 +86,13 @@ class ApplePodcastDirectory(private val client: HttpClient) : PodcastDirectory {
         throw e as? PodcastDirectoryException ?: PodcastDirectoryException("Request to $url failed: ${e?.let { it.message ?: it::class.simpleName }}", e)
     }
 
-    private inline fun <reified T> decode(body: String): T = try {
-        json.decodeFromString<T>(body)
-    } catch (e: Exception) {
-        throw PodcastDirectoryException("Unexpected response from Apple: ${e.message}", e)
+    // Off the main thread: a chart's lookups run to hundreds of KB, and decoding them there stalls the UI.
+    private suspend inline fun <reified T> decode(body: String): T = withContext(Dispatchers.Default) {
+        try {
+            json.decodeFromString<T>(body)
+        } catch (e: Exception) {
+            throw PodcastDirectoryException("Unexpected response from Apple: ${e.message}", e)
+        }
     }
 
     @Serializable
