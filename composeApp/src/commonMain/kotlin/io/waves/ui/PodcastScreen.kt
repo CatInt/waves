@@ -39,7 +39,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
@@ -178,7 +177,7 @@ fun PodcastScreen(
         containerColor = Color.Transparent,
         contentWindowInsets = WindowInsets(0),
     ) { padding ->
-        PullToRefreshBox(
+        WavesPullToRefreshBox(
             isRefreshing = ui.refreshing,
             onRefresh = { if (!ui.offline) state.refresh() },
             modifier = Modifier.padding(padding).fillMaxSize().onGloballyPositioned { screenInRoot = it.positionInRoot() },
