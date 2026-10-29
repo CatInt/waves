@@ -5,6 +5,7 @@ import androidx.compose.animation.core.spring
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
@@ -16,6 +17,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshState
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -38,6 +40,8 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
@@ -67,6 +71,9 @@ import kotlinx.coroutines.withTimeoutOrNull
  * [settleMillis] to hold that much longer, so the rows finish moving before the whole list does.
  *
  * Only a pull opens the gap: a refresh that starts on its own ([isRefreshing] with no pull) leaves the content be.
+ *
+ * With [gapInContent], the content stays put and the gap opens where the content places a [PullGap] (a list item
+ * under a header, say): only what's below it moves down.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -76,6 +83,7 @@ fun WavesPullToRefreshBox(
     modifier: Modifier = Modifier,
     state: PullToRefreshState = rememberPullToRefreshState(),
     settleMillis: Long = 0,
+    gapInContent: Boolean = false,
     content: @Composable BoxScope.() -> Unit,
 ) {
     // True from a pull's release until the refresh it started is over. A refresh that nobody pulled for leaves it false,
@@ -143,16 +151,45 @@ fun WavesPullToRefreshBox(
         },
         modifier = modifier.clipToBounds().nestedScroll(closeGuard),
         state = state,
-        indicator = { PullSpinner({ shown.value }, armed, Modifier.align(Alignment.TopCenter)) },
+        indicator = { if (!gapInContent) PullSpinner({ shown.value }, armed, Modifier.align(Alignment.TopCenter)) },
     ) {
         // The scroll handler stays put, so a pull can keep going once the pointer is over the gap it opened.
         // Only the content moves down.
         Box(Modifier.fillMaxSize().pullScroll(state, locked = { armed || bouncing })) {
-            Box(
-                Modifier.fillMaxSize().graphicsLayer { translationY = shown.value * PullThreshold.toPx() },
-                content = content,
-            )
+            if (gapInContent) {
+                val gap = remember { PullGapState({ shown.value }, { armed }) }
+                CompositionLocalProvider(LocalPullGap provides gap) { Box(Modifier.fillMaxSize(), content = content) }
+            } else {
+                Box(
+                    Modifier.fillMaxSize().graphicsLayer { translationY = shown.value * PullThreshold.toPx() },
+                    content = content,
+                )
+            }
         }
+    }
+}
+
+private class PullGapState(val fraction: () -> Float, val refreshing: () -> Boolean)
+
+private val LocalPullGap = staticCompositionLocalOf<PullGapState?> { null }
+
+/**
+ * Where the gap of the [WavesPullToRefreshBox] around it opens, for one made with `gapInContent`: as tall as the pull,
+ * with the spinner in it, and nothing at all otherwise.
+ */
+@Composable
+fun PullGap(modifier: Modifier = Modifier) {
+    val gap = LocalPullGap.current ?: return
+    Box(
+        modifier.fillMaxWidth()
+            .clipToBounds()
+            .layout { measurable, constraints ->
+                val placeable = measurable.measure(constraints.copy(minHeight = 0, maxHeight = Constraints.Infinity))
+                val height = (gap.fraction() * PullThreshold.toPx()).roundToInt().coerceAtLeast(0)
+                layout(placeable.width, height) { placeable.place(0, 0) }
+            },
+    ) {
+        Box(Modifier.fillMaxWidth()) { PullSpinner(gap.fraction, gap.refreshing(), Modifier.align(Alignment.TopCenter)) }
     }
 }
 
@@ -176,8 +213,9 @@ private fun PullSpinner(fraction: () -> Float, refreshing: Boolean, modifier: Mo
     Box(
         modifier
             .height(PullThreshold)
-            // As tall as the gap at the threshold, its bottom edge on the content's top edge.
-            .offset { IntOffset(0, ((fraction() - 1f) * PullThreshold.toPx()).roundToInt()) },
+            // As tall as the gap at the threshold, its bottom edge on the content's top edge, then [SpinnerDrop] lower so the
+            // ring sits a little below the gap's middle.
+            .offset { IntOffset(0, ((fraction() - 1f) * PullThreshold.toPx() + SpinnerDrop.toPx()).roundToInt()) },
         contentAlignment = Alignment.Center,
     ) {
         val color = MaterialTheme.colorScheme.primary
@@ -196,6 +234,9 @@ private fun PullSpinner(fraction: () -> Float, refreshing: Boolean, modifier: Mo
 }
 
 private val SpinnerSize = 24.dp
+
+/** How far below the middle of the gap the ring sits; the line above the gap (a divider, a top bar) makes the middle look high. */
+private val SpinnerDrop = 10.dp
 private val SpinnerStroke = 2.5.dp
 
 /** Scroll per wheel unit, as on macOS (a notch, or a trackpad's precise delta). */
