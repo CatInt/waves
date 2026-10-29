@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
+import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -153,7 +154,7 @@ class HomeUpNextStateTest {
         library.subscribe(podcastB)
         library.upsertEpisodes(podcastA.feedUrl, listOf(episode(podcastA, 1), episode(podcastA, 2)))
         library.upsertEpisodes(podcastB.feedUrl, listOf(episode(podcastB, 1)))
-        val s = HomeState(library, MapFeedRepository(emptyMap()), backgroundScope, clock = { 10_000L })
+        val s = HomeState(library, MapFeedRepository(emptyMap()), backgroundScope, clock = { 10_000L }, workContext = EmptyCoroutineContext)
         settle()
 
         assertEquals(setOf(podcastA, podcastB), s.state.value.shelf.toSet())
@@ -175,7 +176,7 @@ class HomeUpNextStateTest {
         library.subscribe(podcastB)
         library.upsertEpisodes(podcastA.feedUrl, listOf(episode(podcastA, 1), episode(podcastA, 2)))
         library.upsertEpisodes(podcastB.feedUrl, listOf(episode(podcastB, 1)))
-        val s = HomeState(library, MapFeedRepository(emptyMap()), backgroundScope, clock = { 10_000L })
+        val s = HomeState(library, MapFeedRepository(emptyMap()), backgroundScope, clock = { 10_000L }, workContext = EmptyCoroutineContext)
         settle()
         val before = s.state.value.upNext.map { it.row.episode.id }
         val started = before.last()
@@ -201,7 +202,7 @@ class HomeUpNextStateTest {
         library.subscribe(podcastA)
         library.upsertEpisodes(podcastA.feedUrl, listOf(episode(podcastA, 1), episode(podcastA, 2)))
         val downloads = MutableStateFlow(emptyList<DownloadInfo>())
-        val s = HomeState(library, MapFeedRepository(emptyMap()), backgroundScope, upNextLimit = 1, downloads = downloads)
+        val s = HomeState(library, MapFeedRepository(emptyMap()), backgroundScope, upNextLimit = 1, downloads = downloads, workContext = EmptyCoroutineContext)
         settle()
         assertEquals(1, s.state.value.upNext.size)
         val other = (listOf(episode(podcastA, 1), episode(podcastA, 2)) - s.state.value.upNext.single().row.episode).single()
@@ -216,7 +217,7 @@ class HomeUpNextStateTest {
         val e = episode(podcastB, 1)
         library.upsertEpisodes(podcastB.feedUrl, listOf(e))
         val feeds = MapFeedRepository(mapOf(podcastB.feedUrl to Feed(podcastB, listOf(e))))
-        val s = HomeState(library, feeds, backgroundScope, downloads = flowOf(listOf(done(e.id))))
+        val s = HomeState(library, feeds, backgroundScope, downloads = flowOf(listOf(done(e.id))), workContext = EmptyCoroutineContext)
         settle()
         assertTrue(s.state.value.subscriptions.isEmpty())
         assertTrue(s.state.value.shelf.isEmpty())
@@ -233,7 +234,7 @@ class HomeUpNextStateTest {
         val library = InMemoryLibraryRepository()
         library.subscribe(podcastA)
         val feeds = MapFeedRepository(mapOf(podcastA.feedUrl to Feed(podcastA, listOf(episode(podcastA, 1)))))
-        val s = HomeState(library, feeds, backgroundScope)
+        val s = HomeState(library, feeds, backgroundScope, workContext = EmptyCoroutineContext)
         settle()
         assertEquals(listOf(podcastA.feedUrl), feeds.fetched)
         assertEquals(1, s.state.value.upNext.size)
