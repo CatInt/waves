@@ -34,6 +34,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.waves.model.Podcast
@@ -47,21 +48,34 @@ fun DiscoverScreen(state: DiscoverState, onOpenPodcast: (Podcast) -> Unit) {
         contentWindowInsets = WindowInsets(0),
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
-            OutlinedTextField(
-                value = ui.query,
-                onValueChange = state::onQueryChange,
-                modifier = Modifier.fillMaxWidth().contentInset().padding(horizontal = ScreenGutter, vertical = 4.dp),
-                shape = RoundedCornerShape(12.dp),
-                singleLine = true,
-                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                trailingIcon = {
-                    if (ui.query.isNotEmpty()) {
-                        IconButton(onClick = state::clearQuery) { Icon(Icons.Default.Clear, "Clear search") }
-                    }
-                },
-                placeholder = { Text("Search or paste a link") },
-            )
-            if (ui.isSearching) SearchResults(ui, onOpenPodcast) else TopCharts(ui, state, onOpenPodcast)
+            // As tall as Home's shelf, so the divider under it stays put when swiping between the tabs.
+            Box(Modifier.fillMaxWidth().height(ShelfBandHeight), contentAlignment = Alignment.Center) {
+                OutlinedTextField(
+                    value = ui.query,
+                    onValueChange = state::onQueryChange,
+                    modifier = Modifier.fillMaxWidth().contentInset().padding(horizontal = ScreenGutter),
+                    shape = RoundedCornerShape(12.dp),
+                    singleLine = true,
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                    trailingIcon = {
+                        if (ui.query.isNotEmpty()) {
+                            IconButton(onClick = state::clearQuery) { Icon(Icons.Default.Clear, "Clear search") }
+                        }
+                    },
+                    placeholder = { Text("Search or paste a link") },
+                )
+            }
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                // Results scrolling up end at the divider's line.
+                WavesPullToRefreshBox(
+                    isRefreshing = if (ui.isSearching) ui.searching else ui.topLoading,
+                    onRefresh = state::refresh,
+                    modifier = Modifier.fillMaxSize().clip(BelowListDivider),
+                ) {
+                    if (ui.isSearching) SearchResults(ui, onOpenPodcast) else TopCharts(ui, state, onOpenPodcast)
+                }
+                ListDivider()
+            }
         }
     }
 }
@@ -75,8 +89,8 @@ private fun SearchResults(ui: DiscoverUiState, onOpenPodcast: (Podcast) -> Unit)
         else -> LazyVerticalGrid(
             // Spanning a landscape window, rows keep to the centred content column, which takes one.
             columns = if (LocalIsLandscapeLayout.current) GridCells.Fixed(1) else GridCells.Adaptive(360.dp),
-            contentPadding = listContentPadding(),
-            modifier = Modifier.fillMaxSize().verticalFadingEdge(bottomFadeLength = floatingBarBottomGap()),
+            contentPadding = listContentPadding(top = ListDividerHeight),
+            modifier = Modifier.fillMaxSize().verticalFadingEdge(fadeLength = 0.dp, bottomFadeLength = floatingBarBottomGap()),
         ) {
             itemsIndexed(ui.results) { index, podcast ->
                 val anchor = rememberCoverAnchor(podcast.feedUrl, corner = 8.dp)
@@ -125,10 +139,10 @@ fun PodcastGrid(
 ) {
     LazyVerticalGrid(
         columns = GridCells.Adaptive(100.dp),
-        contentPadding = listContentPadding(horizontal = ScreenGutter),
+        contentPadding = listContentPadding(horizontal = ScreenGutter, top = ListDividerHeight + 8.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
-        modifier = modifier.fillMaxSize().verticalFadingEdge(bottomFadeLength = floatingBarBottomGap()),
+        modifier = modifier.fillMaxSize().verticalFadingEdge(fadeLength = 0.dp, bottomFadeLength = floatingBarBottomGap()),
     ) {
         items(podcasts) { podcast ->
             val anchor = rememberCoverAnchor(podcast.feedUrl, corner = 9.dp)
