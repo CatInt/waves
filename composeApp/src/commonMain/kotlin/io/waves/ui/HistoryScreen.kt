@@ -38,12 +38,13 @@ import androidx.compose.ui.unit.dp
 import io.waves.currentTimeMillis
 import io.waves.platformName
 import io.waves.model.HistoryEntry
+import io.waves.sync.AuthState
 import kotlinx.datetime.DatePeriod
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.minus
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HistoryScreen(
     state: HistoryState,
@@ -51,62 +52,90 @@ fun HistoryScreen(
     onPlay: (HistoryEntry) -> Unit,
     /** Null hides the download state. */
     downloads: DownloadsState? = null,
+    /** Pulling the list down syncs through it while signed in with sync on; null leaves out pull to sync. */
+    sync: SettingsState? = null,
 ) {
     val ui by state.state.collectAsState()
+    val syncUi = sync?.let { it.state.collectAsState().value }
     Scaffold(
         topBar = { WavesTopBar("History", icon = Tab.History.icon) },
         contentWindowInsets = WindowInsets(0),
     ) { padding ->
-        if (ui.loaded && ui.days.isEmpty()) {
-            Centered { Text("Nothing played yet", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            return@Scaffold
+        if (sync != null && syncUi != null && syncUi.auth is AuthState.SignedIn && syncUi.settings.syncEnabled) {
+            WavesPullToRefreshBox(
+                // Only syncs asked for here or in Settings spin; background ones run often while playing.
+                isRefreshing = syncUi.busy,
+                onRefresh = sync::syncNow,
+                modifier = Modifier.padding(padding).fillMaxSize(),
+            ) { HistoryList(ui, deviceId, onPlay, downloads) }
+        } else {
+            HistoryList(ui, deviceId, onPlay, downloads, Modifier.padding(padding))
         }
-        val today = HistoryState.localDate(currentTimeMillis(), TimeZone.currentSystemDefault())
-        LazyColumn(
-            Modifier.padding(padding).fillMaxSize()
-                .verticalFadingEdge(bottomFadeLength = floatingBarBottomGap()),
-            contentPadding = listContentPadding(),
-        ) {
-            ui.days.forEach { day ->
-                stickyHeader(key = day.date.toString()) {
-                    Surface(Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surface) {
-                        SectionLabel(
-                            dayLabel(day.date, today),
-                            Modifier.contentInset().padding(start = ScreenGutter, end = ScreenGutter, top = 10.dp, bottom = 4.dp),
-                        )
-                    }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun HistoryList(
+    ui: HistoryUiState,
+    deviceId: String,
+    onPlay: (HistoryEntry) -> Unit,
+    downloads: DownloadsState?,
+    modifier: Modifier = Modifier,
+) {
+    val today = HistoryState.localDate(currentTimeMillis(), TimeZone.currentSystemDefault())
+    LazyColumn(
+        modifier.fillMaxSize()
+            .verticalFadingEdge(bottomFadeLength = floatingBarBottomGap()),
+        contentPadding = listContentPadding(),
+    ) {
+        // A list even when empty, so it can still be pulled to sync.
+        if (ui.loaded && ui.days.isEmpty()) {
+            item(key = "empty") {
+                Box(Modifier.fillParentMaxSize().padding(ScreenGutter), contentAlignment = Alignment.Center) {
+                    Text("Nothing played yet", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                itemsIndexed(day.entries) { index, entry ->
-                    val thisDevice = entry.deviceId == deviceId
-                    Row(
-                        Modifier.fillMaxWidth().topDivider(index > 0)
-                            .zigzagClickable(top = index > 0, bottom = index < day.entries.lastIndex) { onPlay(entry) }
-                            .contentInset()
-                            .padding(horizontal = ScreenGutter, vertical = ListRowVerticalPadding),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(ListRowGap),
-                    ) {
-                        Box {
-                            Icon(
-                                if (thisDevice) ThisDeviceIcon else Icons.Default.Devices,
-                                contentDescription = if (thisDevice) "This device" else "Other device",
-                                modifier = Modifier.size(20.dp),
-                                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                            )
-                            if (downloads != null) {
-                                HistoryDownloadState(entry, downloads, Modifier.align(Alignment.BottomEnd).offset(5.dp, 5.dp))
-                            }
+            }
+        }
+        ui.days.forEach { day ->
+            stickyHeader(key = day.date.toString()) {
+                Surface(Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surface) {
+                    SectionLabel(
+                        dayLabel(day.date, today),
+                        Modifier.contentInset().padding(start = ScreenGutter, end = ScreenGutter, top = 10.dp, bottom = 4.dp),
+                    )
+                }
+            }
+            itemsIndexed(day.entries) { index, entry ->
+                val thisDevice = entry.deviceId == deviceId
+                Row(
+                    Modifier.fillMaxWidth().topDivider(index > 0)
+                        .zigzagClickable(top = index > 0, bottom = index < day.entries.lastIndex) { onPlay(entry) }
+                        .contentInset()
+                        .padding(horizontal = ScreenGutter, vertical = ListRowVerticalPadding),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(ListRowGap),
+                ) {
+                    Box {
+                        Icon(
+                            if (thisDevice) ThisDeviceIcon else Icons.Default.Devices,
+                            contentDescription = if (thisDevice) "This device" else "Other device",
+                            modifier = Modifier.size(20.dp),
+                            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                        )
+                        if (downloads != null) {
+                            HistoryDownloadState(entry, downloads, Modifier.align(Alignment.BottomEnd).offset(5.dp, 5.dp))
                         }
-                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text(
-                                entry.episodeTitle, style = listTitleStyle(),
-                                maxLines = 2, overflow = TextOverflow.Ellipsis,
-                            )
-                            MetaText(
-                                "${entry.podcastTitle} · ${formatTime(entry.playedAtEpochMs)} · " +
-                                    if (thisDevice) "This device" else entry.deviceId,
-                            )
-                        }
+                    }
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            entry.episodeTitle, style = listTitleStyle(),
+                            maxLines = 2, overflow = TextOverflow.Ellipsis,
+                        )
+                        MetaText(
+                            "${entry.podcastTitle} · ${formatTime(entry.playedAtEpochMs)} · " +
+                                if (thisDevice) "This device" else entry.deviceId,
+                        )
                     }
                 }
             }
