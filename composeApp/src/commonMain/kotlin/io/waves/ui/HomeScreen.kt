@@ -83,14 +83,14 @@ fun HomeScreen(
                 WavesPullToRefreshBox(
                     isRefreshing = ui.refreshing,
                     onRefresh = { if (!ui.offline) state.refreshAll() },
-                    modifier = Modifier.fillMaxSize(),
+                    // Under the shelf, the list and the pull's ring end at its divider's line instead of fading out:
+                    // rows scrolling up, and the ring as it comes down into the gap.
+                    modifier = Modifier.fillMaxSize().then(if (pinned) Modifier.clip(BelowListDivider) else Modifier),
                     // A finished refresh re-sorts Up next; the rows slide into their new order before the list springs back.
                     settleMillis = RowMoveMillis,
                 ) {
                     LazyColumn(
                         Modifier.fillMaxSize()
-                            // Under the shelf, rows scrolling up end at its divider's line instead of fading out.
-                            .then(if (pinned) Modifier.clip(BelowListDivider) else Modifier)
                             .verticalFadingEdge(
                                 fadeLength = if (pinned) 0.dp else 8.dp,
                                 bottomFadeLength = floatingBarBottomGap(),
@@ -137,7 +137,7 @@ fun HomeScreen(
                                 divider = index > 0,
                                 dividerBelow = index < ui.upNext.lastIndex,
                                 // Right under the shelf's divider, the first row's ripple fills up to its zigzag, where the
-                                // list's clip cuts it.
+                                // clip around the list cuts it.
                                 dividerAbove = pinned && index == 0 && ui.error == null,
                                 onToggleComplete = onSetCompleted?.let { { it(item.row.episode, !item.row.played) } },
                                 modifier = Modifier.animateItem(),
