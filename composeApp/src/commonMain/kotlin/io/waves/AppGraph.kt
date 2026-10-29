@@ -26,6 +26,7 @@ import io.waves.search.CachingPodcastDirectory
 import io.waves.sync.DefaultSyncService
 import io.waves.sync.DriveCloudStore
 import io.waves.sync.GoogleAuth
+import io.waves.sync.RateLimitedSyncService
 import io.waves.sync.SyncScheduler
 import io.waves.ui.AppDependencies
 import io.waves.update.GitHubReleases
@@ -95,7 +96,7 @@ class AppGraph(
     val directory = CachingPodcastDirectory(ApplePodcastDirectory(http), SqlDirectoryCacheStore(library.driver))
     val youtube = YoutubeChannels(http)
     val feeds = YoutubeFeedRepository(http)
-    val sync = DefaultSyncService(library, DriveCloudStore(http, auth))
+    val sync = RateLimitedSyncService(DefaultSyncService(library, DriveCloudStore(http, auth)))
     /**
      * Offline mode, entered and left with the connection: Home lists only downloaded and fully cached episodes,
      * feed refresh and sync wait, and local audio is not cleaned up automatically.
