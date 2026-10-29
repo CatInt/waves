@@ -181,6 +181,8 @@ fun PodcastScreen(
             isRefreshing = ui.refreshing,
             onRefresh = { if (!ui.offline) state.refresh() },
             modifier = Modifier.padding(padding).fillMaxSize().onGloballyPositioned { screenInRoot = it.positionInRoot() },
+            // The hero stays put; the gap opens under it, above the episodes.
+            gapInContent = true,
         ) {
             LazyColumn(
                 Modifier.fillMaxSize()
@@ -213,6 +215,7 @@ fun PodcastScreen(
                         authorClickLabel = authorClickLabel,
                     )
                 }
+                item(key = "pull") { PullGap() }
                 if (ui.error != null) {
                     item {
                         Text(
