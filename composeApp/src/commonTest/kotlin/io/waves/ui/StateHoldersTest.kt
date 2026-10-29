@@ -49,6 +49,34 @@ class DiscoverStateTest {
     }
 
     @Test
+    fun refreshWithoutAQueryReloadsTopCharts() = runTest {
+        val dir = RecordingDirectory(listOf(podcastA), failTop = true)
+        val s = DiscoverState(dir, backgroundScope)
+        settle()
+        dir.failTop = false
+        s.refresh()
+        settle()
+        assertEquals(2, dir.topCountries.size)
+        assertEquals(listOf(podcastA), s.state.value.topPodcasts)
+        assertNull(s.state.value.topError)
+        assertTrue(dir.searches.isEmpty())
+    }
+
+    @Test
+    fun refreshRerunsTheCurrentSearch() = runTest {
+        val dir = RecordingDirectory(listOf(podcastA, podcastB))
+        val s = DiscoverState(dir, backgroundScope)
+        s.onQueryChange(" alpha ")
+        settle()
+        s.refresh()
+        settle()
+        assertEquals(listOf("alpha", "alpha"), dir.searches)
+        assertEquals(1, dir.topCountries.size)
+        assertEquals(listOf(podcastA), s.state.value.results)
+        assertFalse(s.state.value.searching)
+    }
+
+    @Test
     fun topChartsErrorIsReported() = runTest {
         val s = DiscoverState(RecordingDirectory(emptyList(), failTop = true), backgroundScope)
         settle()

@@ -7,6 +7,7 @@ import io.waves.youtube.YoutubeUrls
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -50,6 +51,7 @@ class DiscoverState(
     val state: StateFlow<DiscoverUiState> = _state.asStateFlow()
 
     private val queries = MutableStateFlow("")
+    private var refreshJob: Job? = null
 
     init {
         scope.launch { country.collectLatest { loadTop(it) } }
@@ -71,12 +73,20 @@ class DiscoverState(
         scope.launch { loadTop(country.value) }
     }
 
+    /** Reloads what's on screen: the current search when there's a query, else the top charts. */
+    fun refresh() {
+        val term = _state.value.query.trim()
+        refreshJob?.cancel()
+        refreshJob = scope.launch { if (term.isEmpty()) loadTop(country.value) else runSearch(term, country.value) }
+    }
+
     private suspend fun loadTop(country: String) {
         _state.update { it.copy(topLoading = true, topError = null) }
         try {
             val top = directory.topPodcasts(country)
             _state.update { it.copy(topPodcasts = top, topLoading = false) }
         } catch (e: CancellationException) {
+            _state.update { it.copy(topLoading = false) }
             throw e
         } catch (e: Exception) {
             _state.update { it.copy(topLoading = false, topError = e.message ?: "Couldn't load top charts") }
@@ -122,6 +132,7 @@ class DiscoverState(
                 )
             }
         } catch (e: CancellationException) {
+            _state.update { it.copy(searching = false) }
             throw e
         } catch (e: Exception) {
             _state.update { it.copy(searching = false, searchError = e.message ?: "Search failed") }

@@ -1,5 +1,6 @@
 package io.waves
 
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -21,6 +22,8 @@ import io.waves.player.JavaFxRuntime
 import io.waves.player.MacNowPlaying
 import io.waves.player.currentCoverArt
 import io.waves.refresh.DesktopRefresh
+import io.waves.ui.LocalWheelGesture
+import io.waves.ui.MacWheelGesture
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
@@ -87,6 +90,7 @@ fun main() {
         Desktop.getDesktop().addAppEventListener(AppReopenedListener { showMain() })
     }
 
+    val wheelGesture = MacWheelGesture.start()
     application {
         val session by graph.session.collectAsState()
         val close = {
@@ -109,7 +113,10 @@ fun main() {
             },
         ) {
             LaunchedEffect(window) { mainWindow = window }
-            session?.let { App(it.deps, it.state) }
+            session?.let { s ->
+                if (wheelGesture == null) App(s.deps, s.state)
+                else CompositionLocalProvider(LocalWheelGesture provides wheelGesture) { App(s.deps, s.state) }
+            }
         }
         session?.let { s ->
             val episodeCover = remember(s) { currentCoverArt(s.state.playback, graph.http, graph.appScope) }

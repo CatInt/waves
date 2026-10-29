@@ -61,12 +61,8 @@ fun HomeScreen(
         },
         contentWindowInsets = WindowInsets(0),
     ) { padding ->
-        WavesPullToRefreshBox(
-            isRefreshing = ui.refreshing,
-            onRefresh = { if (!ui.offline) state.refreshAll() },
-            modifier = Modifier.padding(padding).fillMaxSize(),
-        ) {
-            if (ui.loaded && ui.subscriptions.isEmpty() && ui.upNext.isEmpty()) {
+        if (ui.loaded && ui.subscriptions.isEmpty() && ui.upNext.isEmpty()) {
+            Box(Modifier.padding(padding)) {
                 Centered {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text("No subscriptions yet", style = MaterialTheme.typography.titleMedium)
@@ -78,10 +74,19 @@ fun HomeScreen(
                         Button(onClick = onDiscover) { Text("Discover podcasts") }
                     }
                 }
-            } else Column(Modifier.fillMaxSize()) {
-                val pinned = ui.shelf.isNotEmpty()
-                if (pinned) ShowShelf(ui.shelf, onOpenPodcast, Modifier.padding(top = 8.dp, bottom = 4.dp))
-                Box(Modifier.weight(1f).fillMaxWidth()) {
+            }
+        } else Column(Modifier.padding(padding).fillMaxSize()) {
+            val pinned = ui.shelf.isNotEmpty()
+            if (pinned) ShowShelf(ui.shelf, onOpenPodcast, Modifier.padding(top = 8.dp, bottom = 4.dp))
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                // Only the list moves with a pull; the shelf and its divider stay put above the gap.
+                WavesPullToRefreshBox(
+                    isRefreshing = ui.refreshing,
+                    onRefresh = { if (!ui.offline) state.refreshAll() },
+                    modifier = Modifier.fillMaxSize(),
+                    // A finished refresh re-sorts Up next; the rows slide into their new order before the list springs back.
+                    settleMillis = RowMoveMillis,
+                ) {
                     LazyColumn(
                         Modifier.fillMaxSize()
                             // Under the shelf, rows scrolling up end at its divider's line instead of fading out.
@@ -136,9 +141,9 @@ fun HomeScreen(
                             )
                         }
                     }
-                    // Stays put as rows scroll under it.
-                    if (pinned) ListDivider()
                 }
+                // Stays put as rows scroll under it.
+                if (pinned) ListDivider()
             }
         }
     }
@@ -161,13 +166,21 @@ private fun ShowShelf(shows: List<Podcast>, onOpenPodcast: (Podcast) -> Unit, mo
                         onOpenPodcast(podcast)
                     },
                 ) {
-                    Artwork(podcast.artworkUrl, podcast.title, anchor.modifier, size = 92.dp, corner = 9.dp, onLoaded = anchor.onLoaded)
+                    Artwork(podcast.artworkUrl, podcast.title, anchor.modifier, size = ShelfCoverSize, corner = 9.dp, onLoaded = anchor.onLoaded)
                 }
             }
         }
         Spacer(Modifier.height(8.dp))
     }
 }
+
+private val ShelfCoverSize = 92.dp
+
+/** About how long `animateItem`'s default placement spring takes to bring a row to its new place. */
+private const val RowMoveMillis = 400L
+
+/** Top bar to the shelf's divider: the shelf's padding (8 dp, 4 dp), covers and spacer. Discover's search band matches it. */
+internal val ShelfBandHeight = 8.dp + ShelfCoverSize + 8.dp + 4.dp
 
 internal val UpNextReason.label: String?
     get() = when (this) {
