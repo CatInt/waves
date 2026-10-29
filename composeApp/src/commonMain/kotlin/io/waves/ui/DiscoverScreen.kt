@@ -139,7 +139,7 @@ fun PodcastGrid(
 ) {
     LazyVerticalGrid(
         columns = GridCells.Adaptive(100.dp),
-        contentPadding = listContentPadding(horizontal = ScreenGutter, top = ListDividerHeight + 8.dp),
+        contentPadding = listContentPadding(horizontal = ScreenGutter, top = ListDividerHeight + 12.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
         modifier = modifier.fillMaxSize().verticalFadingEdge(fadeLength = 0.dp, bottomFadeLength = floatingBarBottomGap()),
