@@ -27,7 +27,6 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -167,17 +166,18 @@ private val BounceBack = spring<Float>(dampingRatio = 0.65f, stiffness = 300f)
 private val PullThreshold = PullToRefreshDefaults.PositionalThreshold
 
 /**
- * Centred in the gap above the pulled-down content: fills in as the pull nears the threshold, then spins.
+ * Rides on top of the pulled-down content, moving with it as if it lived in the gap the pull opens: it comes down
+ * into view from behind the top edge (the box clips it) and is centred in the gap once the pull reaches the
+ * threshold. Fills in as the pull nears the threshold, then spins.
  * Laid out, not drawn into a layer: a layer stops redrawing once the pull is still, and the spinner freezes.
  */
 @Composable
 private fun PullSpinner(fraction: () -> Float, refreshing: Boolean, modifier: Modifier = Modifier) {
-    val f = fraction()
     Box(
         modifier
             .height(PullThreshold)
-            .offset { IntOffset(0, ((fraction() - 1f) * PullThreshold.toPx() / 2f).roundToInt()) }
-            .alpha(f.coerceIn(0f, 1f)),
+            // As tall as the gap at the threshold, its bottom edge on the content's top edge.
+            .offset { IntOffset(0, ((fraction() - 1f) * PullThreshold.toPx()).roundToInt()) },
         contentAlignment = Alignment.Center,
     ) {
         val color = MaterialTheme.colorScheme.primary
