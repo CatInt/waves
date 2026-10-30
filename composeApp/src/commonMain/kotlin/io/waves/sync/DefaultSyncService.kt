@@ -68,7 +68,9 @@ class DefaultSyncService(
             // Only records that differ from our snapshot are imported (the rest would be no-ops), so pulling one
             // remote edit into a large library touches one row, not all of them.
             val delta = changesSince(SyncMerge.normalize(local), merged)
-            if (delta.subscriptions.isNotEmpty() || delta.progress.isNotEmpty() || delta.history.isNotEmpty()) {
+            if (delta.subscriptions.isNotEmpty() || delta.progress.isNotEmpty() || delta.history.isNotEmpty() ||
+                delta.archive.isNotEmpty()
+            ) {
                 library.importSyncState(delta)
             }
             return
@@ -81,11 +83,13 @@ class DefaultSyncService(
         val subs = local.subscriptions.toHashSet()
         val progress = local.progress.toHashSet()
         val history = local.history.toHashSet()
+        val archive = local.archive.toHashSet()
         return SyncState(
             version = merged.version,
             subscriptions = merged.subscriptions.filter { it !in subs },
             progress = merged.progress.filter { it !in progress },
             history = merged.history.filter { it !in history },
+            archive = merged.archive.filter { it !in archive },
         )
     }
 

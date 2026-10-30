@@ -30,6 +30,26 @@ class YoutubeUrlsTest {
     }
 
     @Test
+    fun liveTabAndLiveListLinksAreTheLiveArchive() {
+        val tail = channel.removePrefix("UC")
+        val archive = YoutubeTarget.LiveArchive(channel)
+        assertEquals(YoutubeTarget.Vanity("https://www.youtube.com/@examplechannel", live = true), YoutubeUrls.parse("https://www.youtube.com/@examplechannel/streams"))
+        assertEquals(YoutubeTarget.Vanity("https://www.youtube.com/c/SomeName", live = true), YoutubeUrls.parse("https://www.youtube.com/c/SomeName/streams"))
+        assertEquals(archive, YoutubeUrls.parse("https://www.youtube.com/channel/$channel/streams"))
+        assertEquals(archive, YoutubeUrls.parse("https://www.youtube.com/playlist?list=UULV$tail"))
+        assertEquals("https://www.youtube.com/feeds/videos.xml?playlist_id=UULV$tail", YoutubeUrls.liveArchiveFeedUrl(channel))
+        assertEquals(archive, YoutubeUrls.parse(YoutubeUrls.liveArchiveFeedUrl(channel)))
+        assertEquals(channel, YoutubeUrls.channelIdOfLiveArchive(YoutubeUrls.liveArchiveFeedUrl(channel)))
+        // Still a playlist feed, so it loads and opens its creator like one.
+        assertEquals("UULV$tail", YoutubeUrls.playlistIdOfFeed(YoutubeUrls.liveArchiveFeedUrl(channel)))
+        assertNull(YoutubeUrls.channelIdOfLiveArchive(YoutubeUrls.uploadsFeedUrl(channel)))
+        assertNull(YoutubeUrls.channelIdOfLiveArchive(YoutubeUrls.feedUrl(channel)))
+        assertEquals("firstVideo1", YoutubeUrls.videoId("https://www.youtube.com/watch?v=firstVideo1&list=UULV$tail"))
+        // Other tabs are the channel.
+        assertEquals(YoutubeTarget.Channel(channel), YoutubeUrls.parse("https://www.youtube.com/channel/$channel/videos"))
+    }
+
+    @Test
     fun videoLinks() {
         assertEquals(YoutubeTarget.Video("firstVideo1"), YoutubeUrls.parse("https://www.youtube.com/watch?v=firstVideo1&t=12"))
         assertEquals(YoutubeTarget.Video("firstVideo1"), YoutubeUrls.parse("https://youtu.be/firstVideo1"))

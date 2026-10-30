@@ -1,5 +1,6 @@
 package io.waves.sync
 
+import io.waves.model.Episode
 import io.waves.model.HistoryEntry
 import io.waves.model.PlaybackProgress
 import io.waves.model.Podcast
@@ -8,7 +9,7 @@ import kotlinx.serialization.Serializable
 /**
  * Everything that syncs between devices, stored as one JSON file in the user's Google Drive appDataFolder.
  * Merge rules: subscriptions LWW per feedUrl (tombstones via subscribed=false), progress LWW per episode,
- * history = union deduplicated by (episodeId, playedAt, deviceId).
+ * history = union deduplicated by (episodeId, playedAt, deviceId), archive = union by episode.
  */
 @Serializable
 data class SyncState(
@@ -16,6 +17,11 @@ data class SyncState(
     val subscriptions: List<SubscriptionRecord> = emptyList(),
     val progress: List<PlaybackProgress> = emptyList(),
     val history: List<HistoryEntry> = emptyList(),
+    /**
+     * Episodes of followed shows whose feed only ever lists the newest few (a YouTube live archive: 15), so the
+     * older ones a device has seen survive on the others. A new top-level key, so files without it still read.
+     */
+    val archive: List<Episode> = emptyList(),
 )
 
 @Serializable

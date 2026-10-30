@@ -1,5 +1,6 @@
 package io.waves.sync
 
+import io.waves.model.Episode
 import io.waves.model.EpisodeId
 import io.waves.model.HistoryEntry
 import io.waves.model.PlaybackProgress
@@ -87,6 +88,29 @@ class SyncMergeTest {
         assertEquals(1499, m.history.first().playedAtEpochMs)
         assertEquals(500, m.history.last().playedAtEpochMs)
         assertFalse(m.history.any { it.playedAtEpochMs < 500 })
+    }
+
+    private fun archived(guid: String, at: Long?, seconds: Long? = null, feed: String = "live") =
+        Episode(guid = guid, podcastFeedUrl = feed, title = guid, audioUrl = "https://www.youtube.com/watch?v=$guid",
+            publishedAtEpochMs = at, durationSeconds = seconds)
+
+    @Test
+    fun archiveIsUnionedNewestFirstPreferringACopyWithALength() {
+        val a = SyncState(archive = listOf(archived("old", 1), archived("mid", 2, seconds = null)))
+        val b = SyncState(archive = listOf(archived("mid", 2, seconds = 3600), archived("new", 3)))
+        val m = SyncMerge.merge(a, b)
+        assertEquals(listOf("new", "mid", "old"), m.archive.map { it.guid })
+        assertEquals(3600L, m.archive[1].durationSeconds)
+        assertEquals(m, SyncMerge.merge(b, a))
+        assertEquals(m, SyncMerge.merge(m, b))
+    }
+
+    @Test
+    fun archiveCappedToNewest() {
+        val many = SyncState(archive = (0 until SyncMerge.ARCHIVE_CAP + 10).map { archived("$it", it.toLong()) })
+        val m = SyncMerge.normalize(many)
+        assertEquals(SyncMerge.ARCHIVE_CAP, m.archive.size)
+        assertEquals("${SyncMerge.ARCHIVE_CAP + 9}", m.archive.first().guid)
     }
 
     @Test

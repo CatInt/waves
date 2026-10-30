@@ -53,4 +53,22 @@ class LiveYoutubeFeedTest {
             assertEquals("https://www.youtube.com/feeds/videos.xml?channel_id=UCSHZKyawb77ixDdsGog4iWA", creator.feedUrl)
         }
     }
+
+    @Test
+    fun nbcNewsLiveTabIsAShowOfEndedStreams() = runBlocking {
+        if (!enabled) return@runBlocking
+        HttpClient(Java).use { client ->
+            val podcast = YoutubeChannels(client).resolve("https://www.youtube.com/@NBCNews/streams")
+            println("live archive: ${podcast.title} by ${podcast.author}, art=${podcast.artworkUrl}")
+            assertEquals(YoutubeUrls.liveArchiveFeedUrl("UCeY0bbntWzzVIaj2z3QigXg"), podcast.feedUrl)
+            assertEquals("NBC News · Lived", podcast.title)
+            assertEquals(true, YoutubeChannels(client).hasLiveArchive("UCeY0bbntWzzVIaj2z3QigXg"))
+
+            val feed = YoutubeFeedRepository(client).fetch(podcast.feedUrl)
+            feed.episodes.take(3).forEach { println("  ${it.title} | ${it.durationSeconds}s | ${it.audioUrl}") }
+            assertTrue(feed.episodes.isNotEmpty())
+            // Only ended streams, so every one has its length.
+            assertTrue(feed.episodes.all { it.durationSeconds != null })
+        }
+    }
 }

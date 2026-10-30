@@ -14,6 +14,7 @@ import io.waves.model.Podcast
 import io.waves.sync.SubscriptionRecord
 import io.waves.sync.SyncMerge
 import io.waves.sync.SyncState
+import io.waves.youtube.YoutubeUrls
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.flow.Flow
@@ -36,6 +37,11 @@ class SqlLibraryRepository(
     /** The underlying driver, exposed so other stores (e.g. downloads) share this connection. */
     val driver: SqlDriver,
     private val ioContext: CoroutineContext = Dispatchers.IO,
+    /**
+     * Feeds that only ever list their newest few episodes (a YouTube live archive), so the older ones stored here
+     * are the archive. A followed one's episodes go out with sync ([SyncState.archive]).
+     */
+    private val archivedFeed: (String) -> Boolean = YoutubeUrls::isLiveArchive,
     private val clock: () -> Long = ::currentTimeMillis,
 ) : LibraryRepository {
 
@@ -148,6 +154,9 @@ class SqlLibraryRepository(
                 }.executeAsList(),
                 progress = progressQ.all().executeAsList().map { it.toModel() },
                 history = historyQ.all().executeAsList().map { it.toModel() },
+                archive = podcasts.subscribed(::podcastFromColumns).executeAsList()
+                    .filter { archivedFeed(it.feedUrl) }
+                    .flatMap { p -> episodesQ.byFeed(p.feedUrl).executeAsList().map { it.toModel() } },
             )
         }
     }
@@ -182,6 +191,14 @@ class SqlLibraryRepository(
                 if (stored == null || SyncMerge.supersedes(incoming, stored)) progressQ.putProgress(incoming)
             }
             state.history.forEach { historyQ.insertHistory(it) }
+            for (e in state.archive) {
+                if (!archivedFeed(e.podcastFeedUrl)) continue
+                episodesQ.insertIfAbsent(
+                    e.podcastFeedUrl, e.guid, e.title, e.audioUrl, e.publishedAtEpochMs,
+                    e.durationSeconds, e.description, e.artworkUrl,
+                )
+                e.durationSeconds?.let { episodesQ.fillDuration(it, e.podcastFeedUrl, e.guid) }
+            }
         }
     }
 

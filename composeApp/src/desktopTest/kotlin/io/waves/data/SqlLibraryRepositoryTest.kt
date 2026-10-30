@@ -9,6 +9,7 @@ import io.waves.model.PlaybackProgress
 import io.waves.model.Podcast
 import io.waves.sync.SubscriptionRecord
 import io.waves.sync.SyncState
+import io.waves.youtube.YoutubeUrls
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
@@ -33,6 +34,45 @@ class SqlLibraryRepositoryTest {
 
     private fun podcast(url: String, title: String) = Podcast(feedUrl = url, title = title, author = "a")
     private val id = EpisodeId("https://a/feed", "g1")
+
+    private val live = YoutubeUrls.liveArchiveFeedUrl("UCexampleChannel00000000")
+
+    private fun stream(guid: String, at: Long, seconds: Long? = null, title: String = guid) = Episode(
+        guid = guid, podcastFeedUrl = live, title = title, audioUrl = YoutubeUrls.watchUrl(guid),
+        publishedAtEpochMs = at, durationSeconds = seconds,
+    )
+
+    @Test fun followedLiveArchiveEpisodesGoOutWithSync() = runBlocking<Unit> {
+        repo.subscribe(podcast(live, "Example · Lived"))
+        repo.upsertEpisodes(live, listOf(stream("liveStream1", 2), stream("liveStream0", 1)))
+        // Ordinary feeds list their whole back catalogue themselves, and an archive nobody follows isn't synced.
+        repo.subscribe(podcast("https://a/feed", "Ordinary"))
+        repo.upsertEpisodes("https://a/feed", listOf(Episode("g1", "https://a/feed", "t", "https://a/1.mp3")))
+        val other = YoutubeUrls.liveArchiveFeedUrl("UCanotherChannel00000000")
+        repo.rememberPodcast(podcast(other, "Not followed"))
+        repo.upsertEpisodes(other, listOf(stream("liveStream9", 9).copy(podcastFeedUrl = other)))
+
+        assertEquals(listOf("liveStream1", "liveStream0"), repo.exportSyncState().archive.map { it.guid })
+    }
+
+    @Test fun importAddsMissingArchivedEpisodesAndKeepsOurs() = runBlocking<Unit> {
+        repo.upsertEpisodes(live, listOf(stream("liveStream1", 2, title = "Ours")))
+        repo.importSyncState(
+            SyncState(
+                archive = listOf(
+                    stream("liveStream1", 2, seconds = 3600, title = "Theirs"),
+                    stream("liveStream0", 1, seconds = 60),
+                    // Only archives come in this way.
+                    Episode("g1", "https://a/feed", "t", "https://a/1.mp3"),
+                ),
+            ),
+        )
+        val stored = repo.episodes(live).first()
+        assertEquals(listOf("liveStream1", "liveStream0"), stored.map { it.guid })
+        assertEquals("Ours", stored[0].title)
+        assertEquals(3600L, stored[0].durationSeconds) // the length we lacked
+        assertTrue(repo.episodes("https://a/feed").first().isEmpty())
+    }
 
     @Test fun subscriptionsSortedByTitleAndUnsubscribeKeepsTombstone() = runBlocking<Unit> {
         repo.subscribe(podcast("https://b", "beta"))

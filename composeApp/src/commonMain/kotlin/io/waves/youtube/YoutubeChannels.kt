@@ -11,6 +11,8 @@ import io.waves.feed.FeedDates
 import io.waves.feed.FeedFetchException
 import io.waves.model.Podcast
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -25,17 +27,45 @@ import kotlinx.serialization.json.putJsonObject
  * the playlist. Either way it's the same kind of subscription as an Apple show.
  */
 class YoutubeChannels(private val client: HttpClient) {
+    /** [hasLiveArchive]'s answers, by channel, for as long as the app runs. */
+    private val liveArchives = mutableMapOf<String, Boolean>()
+    private val liveArchivesLock = Mutex()
 
     suspend fun resolve(input: String): Podcast {
         val target = YoutubeUrls.parse(input.trim())
             ?: throw YoutubeException("Paste a YouTube channel or playlist link, like youtube.com/@name")
         val channelId = when (target) {
             is YoutubeTarget.Channel -> target.id
-            is YoutubeTarget.Vanity -> browseId(target.url)
+            is YoutubeTarget.Vanity -> browseId(target.url).also { if (target.live) return liveArchive(it) }
             is YoutubeTarget.Video -> channelOfVideo(target.id)
             is YoutubeTarget.Playlist -> return playlist(target.id)
+            is YoutubeTarget.LiveArchive -> return liveArchive(target.channelId)
         }
         return podcast(channelId)
+    }
+
+    /**
+     * The shows a pasted link stands for, as Discover lists them: the one [resolve] gives, then for a channel its
+     * live archive, when the channel has streamed ([hasLiveArchive]).
+     */
+    suspend fun shows(input: String): List<Podcast> {
+        val show = resolve(input)
+        return if (YoutubeUrls.channelIdOfFeed(show.feedUrl) != null) channelShows(show) else listOf(show)
+    }
+
+    /**
+     * A channel's shows: [channel] itself (its regular uploads), then its live archive when it has streamed, named
+     * and covered like the channel until its own feed fills in the rest. [archive] is the archive as already stored.
+     */
+    suspend fun channelShows(channel: Podcast, archive: Podcast? = null): List<Podcast> {
+        val channelId = YoutubeUrls.channelIdOfFeed(channel.feedUrl) ?: return listOf(channel)
+        val live = archive ?: Podcast(
+            feedUrl = YoutubeUrls.liveArchiveFeedUrl(channelId),
+            title = liveArchiveTitle(channel.title),
+            author = channel.title,
+            artworkUrl = channel.artworkUrl,
+        ).takeIf { hasLiveArchive(channelId) == true }
+        return listOfNotNull(channel, live)
     }
 
     /**
@@ -52,6 +82,32 @@ class YoutubeChannels(private val client: HttpClient) {
             null
         }
     }
+
+    /**
+     * Whether the channel has a live archive worth opening: its live streams list exists and has a stream in it. The
+     * Atom feed answers cheaply; when it has nothing (it 404s for every channel during YouTube's feed outages), the
+     * list's page decides, which counts only ended streams. Null when YouTube doesn't answer either way. Remembered
+     * per channel once known.
+     */
+    suspend fun hasLiveArchive(channelId: String): Boolean? {
+        liveArchivesLock.withLock { liveArchives[channelId] }?.let { return it }
+        val list = YoutubeUrls.liveListId(channelId)
+        val url = YoutubeUrls.playlistFeedUrl(list)
+        val fromFeed = try {
+            client.youtubeFeed(url, url)?.let { YoutubeFeedParser.parse(url, it).episodes.isNotEmpty() }
+        } catch (_: FeedFetchException) {
+            null
+        }
+        val answer = fromFeed?.takeIf { it }
+            ?: YoutubePlaylists(client, this).page(list)?.let { page -> parseListedVideos(page).any { it.seconds != null } }
+            ?: fromFeed
+            ?: return null
+        liveArchivesLock.withLock { liveArchives[channelId] = answer }
+        return answer
+    }
+
+    /** The channel's past live streams as a show of their own: what a channel's Live tab link stands for. */
+    suspend fun liveArchive(channelId: String): Podcast = playlist(YoutubeUrls.liveListId(channelId))
 
     private suspend fun playlist(playlistId: String): Podcast {
         val feedUrl = YoutubeUrls.playlistFeedUrl(playlistId)
