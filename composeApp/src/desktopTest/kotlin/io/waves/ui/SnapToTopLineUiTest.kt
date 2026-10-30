@@ -1,6 +1,8 @@
 package io.waves.ui
 
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -101,6 +103,31 @@ class SnapToTopLineUiTest {
             waitForIdle()
         }
         assertEquals(4, snaps)
+    }
+
+    @Test
+    fun theDividerDoesNotRestAcrossARowsText() = runComposeUiTest {
+        val state = LazyListState()
+        lateinit var guides: SnapGuides
+        setContent {
+            guides = rememberSnapGuides()
+            SnapToTopLine(state, guides = guides)
+            LazyColumn(Modifier.fillMaxSize().snapGuideList(guides), state = state) {
+                items(40) {
+                    Column(Modifier.fillMaxWidth().height(160.dp)) {
+                        Spacer(Modifier.height(60.dp))
+                        Text("Title $it", Modifier.height(40.dp).keepWhole(guides))
+                    }
+                }
+            }
+        }
+        waitForIdle()
+        val divider = density.run { ListDividerHeight.toPx() }
+        // Row 5's title runs from 10 dp above the divider to 30 dp below it, too far from any row's top to snap there.
+        rest(state, index = 5, offset = density.run { 70.dp.roundToPx() })
+        // It comes the shorter way out: shown whole, just below the divider.
+        val row5 = state.layoutInfo.visibleItemsInfo.first { it.index == 5 }
+        assertEquals(divider, row5.offset + density.run { 60.dp.toPx() }, 1f)
     }
 
     @Test

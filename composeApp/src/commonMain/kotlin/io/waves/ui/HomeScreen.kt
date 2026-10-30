@@ -92,9 +92,11 @@ fun HomeScreen(
                 ) {
                     val list = rememberLazyListState()
                     // Rows come to rest with their divider on the shelf's, not a sliver above or below it.
-                    if (pinned) SnapToTopLine(list, reach = EpisodeSnapReach)
+                    val guides = rememberSnapGuides()
+                    if (pinned) SnapToTopLine(list, reach = EpisodeSnapReach, guides = guides)
                     LazyColumn(
                         Modifier.fillMaxSize()
+                            .snapGuideList(guides)
                             .verticalFadingEdge(
                                 fadeLength = if (pinned) 0.dp else 8.dp,
                                 bottomFadeLength = floatingBarBottomGap(),
@@ -146,6 +148,7 @@ fun HomeScreen(
                                 dividerAbove = pinned && index == 0 && ui.error == null,
                                 onToggleComplete = onSetCompleted?.let { { it(item.row.episode, !item.row.played) } },
                                 modifier = Modifier.animateItem(),
+                                snapGuides = guides.takeIf { pinned },
                             )
                         }
                     }
