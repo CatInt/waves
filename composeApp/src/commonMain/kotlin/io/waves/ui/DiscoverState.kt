@@ -35,7 +35,8 @@ data class DiscoverUiState(
 
 /**
  * Apple top charts + debounced search. Pasting a podcasts.apple.com link resolves it via lookup; pasting a
- * YouTube channel (or video) link resolves the channel as a show via [resolveYoutube]; a playlist link, the playlist.
+ * YouTube channel (or video) link resolves the channel as a show via [resolveYoutube], followed by its live archive
+ * when it has one; a playlist link, the playlist.
  * Charts and search use the store [country] (e.g. `UserSettings.effectiveCountry`); both reload when it changes.
  */
 @OptIn(FlowPreview::class)
@@ -45,13 +46,19 @@ class DiscoverState(
     private val parseAppleUrl: (String) -> Long? = ::parseApplePodcastsUrl,
     private val debounceMs: Long = 350,
     private val country: StateFlow<String> = MutableStateFlow("us"),
-    private val resolveYoutube: (suspend (String) -> Podcast)? = null,
+    private val resolveYoutube: (suspend (String) -> List<Podcast>)? = null,
 ) {
     private val _state = MutableStateFlow(DiscoverUiState())
     val state: StateFlow<DiscoverUiState> = _state.asStateFlow()
 
     private val queries = MutableStateFlow("")
     private var refreshJob: Job? = null
+
+    /**
+     * A creator searched for from a show page, and their own shows (null while still being found), listed instead of
+     * a search for as long as the query is their name.
+     */
+    private var creator: Pair<String, List<Podcast>?>? = null
 
     init {
         scope.launch { country.collectLatest { loadTop(it) } }
@@ -68,6 +75,24 @@ class DiscoverState(
     }
 
     fun clearQuery() = onQueryChange("")
+
+    /**
+     * Lists [name]'s own shows (a YouTube channel and its live archive) under their name, rather than searching for
+     * it. Call with null [shows] at once, so Discover shows it's busy, then again with the shows once known; none
+     * found falls back to an ordinary search for the name.
+     */
+    fun showCreator(name: String, shows: List<Podcast>?) {
+        val term = name.trim()
+        creator = if (shows?.isEmpty() == true) null else term to shows
+        when {
+            _state.value.query.trim() != term -> onQueryChange(name)
+            creator == null -> refresh()
+            else -> _state.update { creatorResults(it, shows) }
+        }
+    }
+
+    private fun creatorResults(state: DiscoverUiState, shows: List<Podcast>?) =
+        state.copy(results = shows.orEmpty(), searching = shows == null, searchError = null, resolvedFromUrl = false)
 
     fun loadTopCharts() {
         scope.launch { loadTop(country.value) }
@@ -98,6 +123,10 @@ class DiscoverState(
             _state.update { it.copy(results = emptyList(), searching = false, searchError = null, resolvedFromUrl = false) }
             return
         }
+        creator?.takeIf { it.first == term }?.let { (_, shows) ->
+            _state.update { creatorResults(it, shows) }
+            return
+        }
         _state.update { it.copy(searching = true, searchError = null) }
         try {
             if (YoutubeUrls.looksLikeUrl(term)) {
@@ -106,9 +135,9 @@ class DiscoverState(
                         it.copy(results = emptyList(), searching = false, resolvedFromUrl = true,
                             searchError = "YouTube links aren't available")
                     }
-                val podcast = resolve(term)
+                val shows = resolve(term)
                 _state.update {
-                    it.copy(results = listOf(podcast), searching = false, resolvedFromUrl = true, searchError = null)
+                    it.copy(results = shows, searching = false, resolvedFromUrl = true, searchError = null)
                 }
                 return
             }
