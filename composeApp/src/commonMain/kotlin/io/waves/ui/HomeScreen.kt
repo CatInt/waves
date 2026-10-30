@@ -170,7 +170,10 @@ private fun ShowShelf(shows: List<Podcast>, onOpenPodcast: (Podcast) -> Unit, mo
                         onOpenPodcast(podcast)
                     },
                 ) {
-                    Artwork(podcast.artworkUrl, podcast.title, anchor.modifier, size = ShelfCoverSize, corner = 9.dp, onLoaded = anchor.onLoaded)
+                    Artwork(
+                        podcast.artworkUrl, podcast.title, anchor.modifier, size = ShelfCoverSize, corner = 9.dp,
+                        onLoaded = anchor.onLoaded, liveArchive = podcast.isLiveArchive,
+                    )
                 }
             }
         }

@@ -127,7 +127,7 @@ class DiscoverStateTest {
             artworkUrl = "https://yt3.example/a.jpg",
         )
         val seen = mutableListOf<String>()
-        val s = DiscoverState(dir, backgroundScope, resolveYoutube = { seen += it; channel })
+        val s = DiscoverState(dir, backgroundScope, resolveYoutube = { seen += it; listOf(channel) })
         s.onQueryChange("https://www.youtube.com/@examplechannel/videos")
         settle()
         assertEquals(listOf("https://www.youtube.com/@examplechannel/videos"), seen)
@@ -135,6 +135,47 @@ class DiscoverStateTest {
         assertTrue(dir.lookups.isEmpty())
         assertEquals(listOf(channel), s.state.value.results)
         assertTrue(s.state.value.resolvedFromUrl)
+    }
+
+    @Test
+    fun creatorSearchListsOnlyTheCreatorsOwnShows() = runTest {
+        val apple = Podcast(feedUrl = "https://example.com/nbc.xml", title = "NBC News Daily")
+        val channel = Podcast(feedUrl = "https://www.youtube.com/feeds/videos.xml?channel_id=UCexampleChannel00000000", title = "NBC News")
+        val archive = Podcast(feedUrl = "https://www.youtube.com/feeds/videos.xml?playlist_id=UULVexampleChannel00000000", title = "NBC News · Lived")
+        val dir = RecordingDirectory(listOf(apple, channel))
+        val s = DiscoverState(dir, backgroundScope)
+        s.showCreator("NBC News", null)
+        settle()
+        assertEquals("NBC News", s.state.value.query)
+        assertTrue(s.state.value.searching)
+        assertTrue(s.state.value.results.isEmpty())
+
+        s.showCreator("NBC News", listOf(channel, archive))
+        assertEquals(listOf(channel, archive), s.state.value.results)
+        assertFalse(s.state.value.searching)
+        // A pull keeps them; nothing goes to Apple's search until the query changes.
+        s.refresh()
+        settle()
+        assertEquals(listOf(channel, archive), s.state.value.results)
+        assertTrue(dir.searches.isEmpty())
+
+        s.onQueryChange("NBC")
+        settle()
+        assertEquals(listOf("NBC"), dir.searches)
+        assertEquals(listOf(apple, channel), s.state.value.results)
+    }
+
+    @Test
+    fun creatorWithNoShowsFoundIsSearchedFor() = runTest {
+        val apple = Podcast(feedUrl = "https://example.com/nbc.xml", title = "NBC News Daily")
+        val dir = RecordingDirectory(listOf(apple))
+        val s = DiscoverState(dir, backgroundScope)
+        s.showCreator("NBC News", null)
+        settle()
+        s.showCreator("NBC News", emptyList())
+        settle()
+        assertEquals(listOf("NBC News"), dir.searches)
+        assertEquals(listOf(apple), s.state.value.results)
     }
 
     @Test

@@ -105,7 +105,10 @@ private fun SearchResults(ui: DiscoverUiState, onOpenPodcast: (Podcast) -> Unit)
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(ListRowGap),
                 ) {
-                    Artwork(podcast.artworkUrl, podcast.title, anchor.modifier, size = 48.dp, onLoaded = anchor.onLoaded)
+                    Artwork(
+                        podcast.artworkUrl, podcast.title, anchor.modifier, size = 48.dp, onLoaded = anchor.onLoaded,
+                        liveArchive = podcast.isLiveArchive,
+                    )
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(podcast.title, style = listTitleStyle(), maxLines = 2, overflow = TextOverflow.Ellipsis)
                         podcast.author?.let { MetaText(it) }

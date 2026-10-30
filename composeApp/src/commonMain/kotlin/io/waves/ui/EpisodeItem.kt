@@ -155,7 +155,9 @@ fun EpisodeItem(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(ListRowGap),
         ) {
-            if (show == null && artworkUrl != null) Artwork(artworkUrl, episode.title, size = 28.dp, corner = 5.dp)
+            if (show == null && artworkUrl != null) {
+                Artwork(artworkUrl, episode.title, size = 28.dp, corner = 5.dp)
+            }
             Text(
                 episode.title,
                 style = listTitleStyle(),

@@ -52,11 +52,14 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.dp
 import io.waves.data.ArtworkColorStore
+import io.waves.data.LibraryRepository
 import io.waves.model.EpisodeId
 import io.waves.model.HistoryEntry
 import io.waves.model.Podcast
 import io.waves.offline.offlinePlayableIds
+import io.waves.youtube.YoutubeChannels
 import io.waves.youtube.YoutubeUrls
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -106,7 +109,7 @@ class AppState(deps: AppDependencies, scope: kotlinx.coroutines.CoroutineScope) 
         deps.directory, scope, deps.parseAppleUrl,
         country = deps.settings.settings.map { it.effectiveCountry }
             .stateIn(scope, SharingStarted.Eagerly, deps.settings.settings.value.effectiveCountry),
-        resolveYoutube = deps.youtube?.let { channels -> { channels.resolve(it) } },
+        resolveYoutube = deps.youtube?.let { channels -> { channels.shows(it) } },
     )
     val home = HomeState(
         deps.library, deps.feeds, scope,
@@ -390,6 +393,7 @@ private fun CurrentScreen(
                         recentFetches = app.recentFetches,
                     )
                 }
+                val pageTitle = detail.state.collectAsState().value.podcast.title
                 PodcastScreen(
                     state = detail,
                     playback = playback,
@@ -398,27 +402,30 @@ private fun CurrentScreen(
                     onPause = app.playback::pause,
                     downloads = app.downloads,
                     onSetCompleted = app.playback::setCompleted,
+                    // Discover searches for the creator; for a YouTube show it lists the creator's own shows instead.
                     onAuthorClick = { author ->
-                        val search = {
-                            nav.select(Tab.Discover)
-                            app.discover.onQueryChange(author)
-                        }
+                        nav.select(Tab.Discover)
                         val youtube = deps.youtube
-                        if (youtube != null && YoutubeUrls.playlistIdOfFeed(screen.podcast.feedUrl) != null) {
-                            scope.launch {
-                                val channel = youtube.creator(screen.podcast.feedUrl)
-                                if (channel == null) search()
-                                else openPodcast(deps.library.podcast(channel.feedUrl) ?: channel, true)
-                            }
+                        val show = detail.state.value.podcast
+                        if (youtube == null || !YoutubeUrls.isYoutubeShow(show.feedUrl)) {
+                            app.discover.onQueryChange(author)
                         } else {
-                            search()
+                            app.discover.showCreator(author, null)
+                            scope.launch {
+                                // Nothing found (or YouTube not answering) falls back to searching for the name.
+                                val shows = try {
+                                    youtubeCreatorShows(show, youtube, deps.library)
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (_: Exception) {
+                                    emptyList()
+                                }
+                                app.discover.showCreator(author, shows)
+                            }
                         }
                     },
-                    authorClickLabel = if (YoutubeUrls.playlistIdOfFeed(screen.podcast.feedUrl) != null) {
-                        { "Open $it" }
-                    } else {
-                        { "Search podcasts by $it" }
-                    },
+                    // A channel's feed names no author: the channel is its own creator.
+                    creatorName = pageTitle.takeIf { YoutubeUrls.channelIdOfFeed(screen.podcast.feedUrl) != null },
                     origin = origin,
                     entry = { entry },
                     flight = { flight },
@@ -457,3 +464,30 @@ private fun RootTabStrip(nav: Navigator, pager: PagerState, stripSlot: TabStripS
 
 /** The screen beneath the player sheet and how deep in the back stack it sits, which puts newer screens on top. */
 private data class Shown(val screen: Screen, val depth: Int)
+
+/**
+ * The YouTube channel behind [show] and its live archive, as Discover lists them under the creator's name: the shows
+ * already stored where there are, else as YouTube names them. Empty when YouTube doesn't say whose [show] is.
+ */
+private suspend fun youtubeCreatorShows(show: Podcast, youtube: YoutubeChannels, library: LibraryRepository): List<Podcast> {
+    val channelId = YoutubeUrls.channelIdOfFeed(show.feedUrl) ?: YoutubeUrls.channelIdOfLiveArchive(show.feedUrl)
+    val channel = if (channelId != null) {
+        val url = YoutubeUrls.feedUrl(channelId)
+        if (url == show.feedUrl) show
+        else library.podcast(url) ?: show.author?.let { Podcast(url, it, artworkUrl = show.artworkUrl) }
+    } else {
+        // A playlist: its channel, with its avatar.
+        youtube.creator(show.feedUrl)?.let { owner ->
+            library.podcast(owner.feedUrl) ?: try {
+                youtube.resolve(owner.feedUrl)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                owner
+            }
+        }
+    } ?: return emptyList()
+    val archiveUrl = YoutubeUrls.liveArchiveFeedUrl(YoutubeUrls.channelIdOfFeed(channel.feedUrl) ?: return listOf(channel))
+    val archive = if (show.feedUrl == archiveUrl) show else library.podcast(archiveUrl)
+    return youtube.channelShows(channel, archive)
+}

@@ -2,8 +2,13 @@ package io.waves.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -16,16 +21,23 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.util.lerp
 import coil3.compose.AsyncImage
 import coil3.compose.LocalPlatformContext
 import coil3.memory.MemoryCache
 import coil3.request.ImageRequest
+import io.waves.model.Podcast
+import io.waves.youtube.YoutubeUrls
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -68,6 +80,13 @@ fun Artwork(
     alignment: Alignment = Alignment.Center,
     placeholderKey: MemoryCache.Key? = null,
     onLoaded: ((MemoryCache.Key?) -> Unit)? = null,
+    /** A YouTube channel's live archive, whose cover is the channel's own: banded to tell the two apart. */
+    liveArchive: Boolean = false,
+    /**
+     * The cover size the live archive's corner is drawn for; null for this cover's own. The show page's cover keeps
+     * its corner as it collapses into the bar's chip, which clips it, but scales it on its flight between screens.
+     */
+    ribbonFor: (() -> Dp)? = null,
 ) {
     val sized = if (size != null) modifier.size(size) else modifier
     Box(
@@ -104,8 +123,86 @@ fun Artwork(
                 },
             )
         }
+        if (liveArchive) LiveArchiveBanner(ribbonFor)
     }
 }
+
+/**
+ * A red ribbon filling the cover's top-left corner, reading "LIVED" (the streams are over) along its edge, sized to
+ * the cover. The smaller the cover the more of it the corner takes, so the word still reads on a list's cover; on the
+ * smallest (a menu's) the corner goes without it.
+ */
+@Composable
+private fun BoxScope.LiveArchiveBanner(fixedSide: (() -> Dp)?) {
+    BoxWithConstraints(
+        Modifier.matchParentSize().drawBehind {
+            val leg = Ribbon.of(fixedSide?.invoke() ?: minOf(size.width, size.height).toDp()).leg.toPx()
+            val corner = Path().apply {
+                moveTo(0f, 0f)
+                lineTo(leg, 0f)
+                lineTo(0f, leg)
+                close()
+            }
+            drawPath(corner, LiveRed)
+        },
+    ) {
+        val side = fixedSide?.invoke() ?: minOf(maxWidth, maxHeight)
+        if (side < 36.dp) return@BoxWithConstraints
+        val ribbon = Ribbon.of(side)
+        val length = ribbon.line * SQRT2
+        // The word runs along the corner's long edge, from [Ribbon.line] along the top to as far down the side.
+        Box(
+            Modifier.align(Alignment.TopStart)
+                .offset(x = ribbon.line / 2 - length / 2, y = ribbon.line / 2 - ribbon.text / 2)
+                .requiredSize(length, ribbon.text)
+                .graphicsLayer { rotationZ = -45f },
+            contentAlignment = Alignment.Center,
+        ) {
+            val text = with(LocalDensity.current) { ribbon.text.toSp() }
+            Text(
+                "LIVED",
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                fontSize = text,
+                // Glyphs sit in a box of their own size, so the word fills the ribbon without line spacing.
+                lineHeight = text,
+                letterSpacing = (0.5f * ribbon.large).sp,
+                maxLines = 1,
+                softWrap = false,
+                // Font padding may make the line a touch taller than the ribbon; let it overhang rather than clip.
+                modifier = Modifier.wrapContentSize(unbounded = true),
+            )
+        }
+    }
+}
+
+/**
+ * The corner ribbon on a cover whose shorter side is [side]: how far along each edge the corner reaches ([leg]), the
+ * word's size ([text]), and where the word's middle crosses the edges ([line]): a little in from the long edge,
+ * toward the corner.
+ */
+private class Ribbon(val large: Float, val leg: Dp, val text: Dp) {
+    val line: Dp get() = leg - text * 0.95f
+
+    companion object {
+        /**
+         * List-sized covers (48 dp and under) give the corner more of themselves than large ones (80 dp and up), and
+         * in between it eases from one to the other, so a cover flying between screens grows its corner smoothly.
+         */
+        fun of(side: Dp): Ribbon {
+            val large = ((side - 48.dp) / 32.dp).coerceIn(0f, 1f)
+            return Ribbon(large, side * lerp(0.42f, 0.34f, large), side * lerp(0.12f, 0.1f, large))
+        }
+    }
+}
+
+private const val SQRT2 = 1.4142135f
+
+/** YouTube's live red, a touch see-through so the art still shows under it. */
+private val LiveRed = Color(0xE6E62117)
+
+/** The show is a YouTube channel's live archive; its cover gets [Artwork]'s banner. */
+internal val Podcast.isLiveArchive: Boolean get() = YoutubeUrls.isLiveArchive(feedUrl)
 
 internal fun initials(title: String): String =
     title.split(' ', '-', '_').filter { it.firstOrNull()?.isLetterOrDigit() == true }
