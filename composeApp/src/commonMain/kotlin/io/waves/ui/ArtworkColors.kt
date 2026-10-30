@@ -77,6 +77,54 @@ private suspend fun artworkSeed(context: PlatformContext, url: String): Color? {
     }
 }
 
+/**
+ * The average colour of the cover at [url]'s top-left corner, where a live archive's ribbon sits, or null until the
+ * cover has loaded. Picked once per URL and then kept with the cover colours, under `corner:<url>`.
+ */
+@Composable
+internal fun rememberCornerColor(url: String?): Color? {
+    val context = LocalPlatformContext.current
+    val store = LocalArtworkColors.current
+    val key = url?.takeIf { it.isNotBlank() }?.let { "corner:$it" }
+    var corner by remember(key, store) { mutableStateOf(key?.let { store.get(it) }?.let { Color(it) }) }
+    LaunchedEffect(key, store) {
+        if (key == null || url == null || corner != null) return@LaunchedEffect
+        val image = artworkPixels(context, url) ?: return@LaunchedEffect
+        val picked = withContext(Dispatchers.Default) { cornerColor(image) } ?: return@LaunchedEffect
+        corner = picked
+        store.put(key, picked.toArgb())
+    }
+    return corner
+}
+
+/** The mean of the pixels in the triangle a ribbon covers: as far in along each edge as [CORNER_REACH] of the side. */
+internal fun cornerColor(image: ArtworkPixels): Color? {
+    val reach = minOf(image.width, image.height) * CORNER_REACH
+    var r = 0L; var g = 0L; var b = 0L; var n = 0
+    for (y in 0 until image.height) {
+        if (y > reach) break
+        for (x in 0 until image.width) {
+            if (x + y > reach) break
+            val p = image.argb[y * image.width + x]
+            r += p shr 16 and 0xff; g += p shr 8 and 0xff; b += p and 0xff; n++
+        }
+    }
+    if (n == 0) return null
+    return Color((r / n).toInt(), (g / n).toInt(), (b / n).toInt())
+}
+
+/** Of a cover's side, how far along each edge a corner ribbon reaches on the largest covers, and a little beyond. */
+private const val CORNER_REACH = 0.42f
+
+/** Close enough to tell apart only with effort: within [LOOKALIKE] of each other in OKLab. */
+internal fun Color.looksLike(other: Color): Boolean {
+    val p = Oklab.of(this); val q = Oklab.of(other)
+    val dl = p.l - q.l; val da = p.a - q.a; val db = p.b - q.b
+    return sqrt(dl * dl + da * da + db * db) < LOOKALIKE
+}
+
+private const val LOOKALIKE = 0.15f
+
 /** A decoded cover's ARGB pixels, row by row. */
 internal class ArtworkPixels(val argb: IntArray, val width: Int, val height: Int)
 

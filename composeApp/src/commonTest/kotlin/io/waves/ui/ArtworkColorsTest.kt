@@ -7,6 +7,7 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.test.Test
+import kotlin.test.assertFalse
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
@@ -81,5 +82,16 @@ class ArtworkColorsTest {
             assertTrue(contrast(dark.onContainer, dark.container) >= 7f, "dark container for $seed")
             assertTrue(hueDistance(hueOf(light.accent), hueOf(seed)) < 12f, "light hue for $seed: ${light.accent}")
         }
+    }
+
+    @Test
+    fun cornerColourIsTheTopLeftTrianglesAverage() {
+        // Red over the corner a ribbon covers, blue elsewhere.
+        val side = 100
+        val argb = IntArray(side * side) { i -> if (i % side + i / side < 50) 0xFFE62117.toInt() else 0xFF0000FF.toInt() }
+        val corner = cornerColor(ArtworkPixels(argb, side, side))!!
+        assertTrue(corner.looksLike(Color(0xFFE62117)), "$corner")
+        assertFalse(Color(0xFF0000FF).looksLike(Color(0xFFE62117)))
+        assertTrue(Color(0xFFD42A1C).looksLike(Color(0xFFE62117)))
     }
 }

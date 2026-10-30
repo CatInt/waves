@@ -1,14 +1,12 @@
 package io.waves.ui
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -21,13 +19,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -129,23 +133,54 @@ fun Artwork(
             )
         }
         when {
-            liveArchive -> CornerRibbon("LIVED", LiveRed, ribbonFor)
+            liveArchive -> CornerRibbon(
+                "LIVED", LiveRed, ribbonFor,
+                coverLikeRibbon = rememberCornerColor(url)?.looksLike(LiveRed) == true,
+            )
             playlist != null -> CornerRibbon(null, LocalPlaylistColors.current.color(playlist), ribbonFor)
         }
     }
 }
 
 /**
- * A ribbon of [color] filling the cover's top-left corner, sized to the cover, reading [label] along its edge:
- * "LIVED" (the streams are over) for a live archive, nothing for a playlist, whose colour says it. The smaller the
- * cover the more of it the corner takes, so the word still reads on a list's cover; on the smallest (a menu's) the
+ * A ribbon of [color] filling the cover's top-left corner, sized to the cover, with [label] along its edge in white at
+ * 30%, so the letters are mostly the cover, set apart from the ribbon by the tint; where the cover there is much the
+ * ribbon's colour ([coverLikeRibbon]) and would blend in, white at 85%, with only a little of the cover showing
+ * through: "LIVED" (the streams are over) for a live archive, nothing for a playlist, whose colour says it. The smaller
+ * the cover the more of it the corner takes, so the word still reads on a list's cover; on the smallest (a menu's) the
  * corner goes without it.
  */
 @Composable
-private fun BoxScope.CornerRibbon(label: String?, color: Color, fixedSide: (() -> Dp)?) {
-    BoxWithConstraints(
-        Modifier.matchParentSize().drawBehind {
-            val leg = Ribbon.of(fixedSide?.invoke() ?: minOf(size.width, size.height).toDp()).leg.toPx()
+private fun BoxScope.CornerRibbon(
+    label: String?,
+    color: Color,
+    fixedSide: (() -> Dp)?,
+    coverLikeRibbon: Boolean = false,
+) {
+    BoxWithConstraints(Modifier.matchParentSize()) {
+        val side = fixedSide?.invoke() ?: minOf(maxWidth, maxHeight)
+        val ribbon = Ribbon.of(side)
+        val measurer = rememberTextMeasurer()
+        val density = LocalDensity.current
+        val word = if (label == null || side < 36.dp) null else {
+            val size = with(density) { ribbon.text.toSp() }
+            measurer.measure(
+                label,
+                TextStyle(
+                    // As heavy as the font goes: cut out of the ribbon, thicker letters show more of the cover.
+                    fontWeight = FontWeight.Black,
+                    fontSize = size,
+                    // Glyphs sit in a box of their own size, so the word fills the ribbon without line spacing.
+                    lineHeight = size,
+                    letterSpacing = (0.5f * ribbon.large).sp,
+                ),
+                softWrap = false,
+                maxLines = 1,
+            )
+        }
+        // Drawn on a layer of its own, so the word clears the ribbon rather than the cover under it.
+        Canvas(Modifier.matchParentSize().graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }) {
+            val leg = ribbon.leg.toPx()
             val corner = Path().apply {
                 moveTo(0f, 0f)
                 lineTo(leg, 0f)
@@ -153,34 +188,20 @@ private fun BoxScope.CornerRibbon(label: String?, color: Color, fixedSide: (() -
                 close()
             }
             drawPath(corner, color)
-        },
-    ) {
-        val side = fixedSide?.invoke() ?: minOf(maxWidth, maxHeight)
-        if (label == null || side < 36.dp) return@BoxWithConstraints
-        val ribbon = Ribbon.of(side)
-        val length = ribbon.line * SQRT2
-        // The word runs along the corner's long edge, from [Ribbon.line] along the top to as far down the side.
-        Box(
-            Modifier.align(Alignment.TopStart)
-                .offset(x = ribbon.line / 2 - length / 2, y = ribbon.line / 2 - ribbon.text / 2)
-                .requiredSize(length, ribbon.text)
-                .graphicsLayer { rotationZ = -45f },
-            contentAlignment = Alignment.Center,
-        ) {
-            val text = with(LocalDensity.current) { ribbon.text.toSp() }
-            Text(
-                label,
-                color = Color.White,
-                fontWeight = FontWeight.Bold,
-                fontSize = text,
-                // Glyphs sit in a box of their own size, so the word fills the ribbon without line spacing.
-                lineHeight = text,
-                letterSpacing = (0.5f * ribbon.large).sp,
-                maxLines = 1,
-                softWrap = false,
-                // Font padding may make the line a touch taller than the ribbon; let it overhang rather than clip.
-                modifier = Modifier.wrapContentSize(unbounded = true),
-            )
+            if (word != null) {
+                // The word runs along the corner's long edge, its middle half [Ribbon.line] in along each edge.
+                val middle = ribbon.line.toPx() / 2
+                rotate(-45f, pivot = Offset(middle, middle)) {
+                    drawText(
+                        word,
+                        // In place of the ribbon, not over it: white letters with the cover showing through, most of
+                        // it, or (on a cover the ribbon's colour, where it would blend in) only a little.
+                        color = Color.White.copy(alpha = if (coverLikeRibbon) 0.85f else 0.3f),
+                        topLeft = Offset(middle - word.size.width / 2f, middle - word.size.height / 2f),
+                        blendMode = BlendMode.Src,
+                    )
+                }
+            }
         }
     }
 }
@@ -191,7 +212,7 @@ private fun BoxScope.CornerRibbon(label: String?, color: Color, fixedSide: (() -
  * toward the corner.
  */
 private class Ribbon(val large: Float, val leg: Dp, val text: Dp) {
-    val line: Dp get() = leg - text * 0.95f
+    val line: Dp get() = leg - text * 1.15f
 
     companion object {
         /**
@@ -200,7 +221,7 @@ private class Ribbon(val large: Float, val leg: Dp, val text: Dp) {
          */
         fun of(side: Dp): Ribbon {
             val large = ((side - 48.dp) / 32.dp).coerceIn(0f, 1f)
-            return Ribbon(large, side * lerp(0.42f, 0.34f, large), side * lerp(0.12f, 0.1f, large))
+            return Ribbon(large, side * lerp(0.42f, 0.34f, large), side * lerp(0.132f, 0.11f, large))
         }
     }
 }
