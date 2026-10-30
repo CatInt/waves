@@ -80,8 +80,13 @@ fun Artwork(
     alignment: Alignment = Alignment.Center,
     placeholderKey: MemoryCache.Key? = null,
     onLoaded: ((MemoryCache.Key?) -> Unit)? = null,
-    /** A YouTube channel's live archive, whose cover is the channel's own: banded to tell the two apart. */
+    /** A YouTube channel's live archive, whose cover is the channel's own: a red corner tells the two apart. */
     liveArchive: Boolean = false,
+    /**
+     * A YouTube playlist's ID, whose cover is its channel's too: a corner tells it apart, in its own colour once it's
+     * followed ([PlaylistColors]). Null for no corner.
+     */
+    playlist: String? = null,
     /**
      * The cover size the live archive's corner is drawn for; null for this cover's own. The show page's cover keeps
      * its corner as it collapses into the bar's chip, which clips it, but scales it on its flight between screens.
@@ -123,17 +128,21 @@ fun Artwork(
                 },
             )
         }
-        if (liveArchive) LiveArchiveBanner(ribbonFor)
+        when {
+            liveArchive -> CornerRibbon("LIVED", LiveRed, ribbonFor)
+            playlist != null -> CornerRibbon(null, LocalPlaylistColors.current.color(playlist), ribbonFor)
+        }
     }
 }
 
 /**
- * A red ribbon filling the cover's top-left corner, reading "LIVED" (the streams are over) along its edge, sized to
- * the cover. The smaller the cover the more of it the corner takes, so the word still reads on a list's cover; on the
- * smallest (a menu's) the corner goes without it.
+ * A ribbon of [color] filling the cover's top-left corner, sized to the cover, reading [label] along its edge:
+ * "LIVED" (the streams are over) for a live archive, nothing for a playlist, whose colour says it. The smaller the
+ * cover the more of it the corner takes, so the word still reads on a list's cover; on the smallest (a menu's) the
+ * corner goes without it.
  */
 @Composable
-private fun BoxScope.LiveArchiveBanner(fixedSide: (() -> Dp)?) {
+private fun BoxScope.CornerRibbon(label: String?, color: Color, fixedSide: (() -> Dp)?) {
     BoxWithConstraints(
         Modifier.matchParentSize().drawBehind {
             val leg = Ribbon.of(fixedSide?.invoke() ?: minOf(size.width, size.height).toDp()).leg.toPx()
@@ -143,11 +152,11 @@ private fun BoxScope.LiveArchiveBanner(fixedSide: (() -> Dp)?) {
                 lineTo(0f, leg)
                 close()
             }
-            drawPath(corner, LiveRed)
+            drawPath(corner, color)
         },
     ) {
         val side = fixedSide?.invoke() ?: minOf(maxWidth, maxHeight)
-        if (side < 36.dp) return@BoxWithConstraints
+        if (label == null || side < 36.dp) return@BoxWithConstraints
         val ribbon = Ribbon.of(side)
         val length = ribbon.line * SQRT2
         // The word runs along the corner's long edge, from [Ribbon.line] along the top to as far down the side.
@@ -160,7 +169,7 @@ private fun BoxScope.LiveArchiveBanner(fixedSide: (() -> Dp)?) {
         ) {
             val text = with(LocalDensity.current) { ribbon.text.toSp() }
             Text(
-                "LIVED",
+                label,
                 color = Color.White,
                 fontWeight = FontWeight.Bold,
                 fontSize = text,
@@ -199,10 +208,15 @@ private class Ribbon(val large: Float, val leg: Dp, val text: Dp) {
 private const val SQRT2 = 1.4142135f
 
 /** YouTube's live red, a touch see-through so the art still shows under it. */
-private val LiveRed = Color(0xE6E62117)
+internal val LiveRed = Color(0xE6E62117)
 
-/** The show is a YouTube channel's live archive; its cover gets [Artwork]'s banner. */
+
+/** The show is a YouTube channel's live archive; its cover gets [Artwork]'s red corner. */
 internal val Podcast.isLiveArchive: Boolean get() = YoutubeUrls.isLiveArchive(feedUrl)
+
+/** The show's playlist ID when it's a YouTube playlist (other than a live archive), for [Artwork]'s corner; else null. */
+internal val Podcast.playlistId: String?
+    get() = YoutubeUrls.playlistIdOfFeed(feedUrl)?.takeIf { !isLiveArchive }
 
 internal fun initials(title: String): String =
     title.split(' ', '-', '_').filter { it.firstOrNull()?.isLetterOrDigit() == true }

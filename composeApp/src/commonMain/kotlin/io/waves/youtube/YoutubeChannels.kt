@@ -11,6 +11,8 @@ import io.waves.feed.FeedDates
 import io.waves.feed.FeedFetchException
 import io.waves.model.Podcast
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonArray
@@ -54,18 +56,32 @@ class YoutubeChannels(private val client: HttpClient) {
     }
 
     /**
-     * A channel's shows: [channel] itself (its regular uploads), then its live archive when it has streamed, named
-     * and covered like the channel until its own feed fills in the rest. [archive] is the archive as already stored.
+     * A channel's shows: [channel] itself (its regular uploads), then its live archive when it has streamed, then its
+     * public playlists in the order its Playlists tab shows them. The archive and playlists are named after YouTube
+     * and covered like the channel (as their own feeds cover them) until their feeds fill in the rest. [archive] is
+     * the archive as already stored.
      */
-    suspend fun channelShows(channel: Podcast, archive: Podcast? = null): List<Podcast> {
-        val channelId = YoutubeUrls.channelIdOfFeed(channel.feedUrl) ?: return listOf(channel)
-        val live = archive ?: Podcast(
-            feedUrl = YoutubeUrls.liveArchiveFeedUrl(channelId),
-            title = liveArchiveTitle(channel.title),
-            author = channel.title,
-            artworkUrl = channel.artworkUrl,
-        ).takeIf { hasLiveArchive(channelId) == true }
-        return listOfNotNull(channel, live)
+    suspend fun channelShows(channel: Podcast, archive: Podcast? = null): List<Podcast> = coroutineScope {
+        val channelId = YoutubeUrls.channelIdOfFeed(channel.feedUrl) ?: return@coroutineScope listOf(channel)
+        val live = async {
+            archive ?: Podcast(
+                feedUrl = YoutubeUrls.liveArchiveFeedUrl(channelId),
+                title = liveArchiveTitle(channel.title),
+                author = channel.title,
+                artworkUrl = channel.artworkUrl,
+            ).takeIf { hasLiveArchive(channelId) == true }
+        }
+        val playlists = async {
+            playlistsTab(channelId)?.let(::parseChannelPlaylists).orEmpty().map { (id, title) ->
+                Podcast(
+                    feedUrl = YoutubeUrls.playlistFeedUrl(id),
+                    title = title,
+                    author = channel.title,
+                    artworkUrl = channel.artworkUrl,
+                )
+            }
+        }
+        listOfNotNull(channel, live.await()) + playlists.await()
     }
 
     /**
@@ -198,11 +214,16 @@ class YoutubeChannels(private val client: HttpClient) {
         videosTab(channelId)?.let(::parseVideoDurations).orEmpty()
 
     /** The channel's Videos tab, newest first, as `browse` returns it. Null when YouTube doesn't answer. */
-    internal suspend fun videosTab(channelId: String): JsonObject? {
+    internal suspend fun videosTab(channelId: String): JsonObject? = tab(channelId, VIDEOS_TAB_PARAMS)
+
+    /** The channel's Playlists tab, as `browse` returns it. Null when YouTube doesn't answer. */
+    private suspend fun playlistsTab(channelId: String): JsonObject? = tab(channelId, PLAYLISTS_TAB_PARAMS)
+
+    private suspend fun tab(channelId: String, params: String): JsonObject? {
         val body = buildJsonObject {
             putJsonObject("context") { put("client", webClient()) }
             put("browseId", channelId)
-            put("params", VIDEOS_TAB_PARAMS)
+            put("params", params)
         }.toString()
         val text = try {
             client.postJson("https://www.youtube.com/youtubei/v1/browse?prettyPrint=false", body, WEB_USER_AGENT)
@@ -248,6 +269,48 @@ internal data class ChannelMetadata(val title: String?, val description: String?
 
 /** `browse` params that select a channel's Videos tab. */
 private const val VIDEOS_TAB_PARAMS = "EgZ2aWRlb3PyBgQKAjoA"
+
+/** `browse` params that select a channel's Playlists tab. */
+private const val PLAYLISTS_TAB_PARAMS = "EglwbGF5bGlzdHPyBgQKAkIA"
+
+/**
+ * Playlist ID → title from a Playlists tab `browse` response, in order: `lockupViewModel`s of playlist content or, in
+ * older layouts, `gridPlaylistRenderer`s. Lists that can't be a show of their own (mixes, the channel's own uploads
+ * and live lists, which are the channel and its archive) are left out.
+ */
+internal fun parseChannelPlaylists(root: JsonElement): List<Pair<String, String>> {
+    val out = LinkedHashMap<String, String>()
+    fun add(id: String?, title: String?) {
+        if (id == null || title.isNullOrBlank() || !YoutubeUrls.isPlaylistId(id) || id.startsWith("UU")) return
+        out.getOrPut(id) { title.trim() }
+    }
+    fun walk(node: JsonElement) {
+        when (node) {
+            is JsonObject -> {
+                val lockup = node.obj("lockupViewModel")
+                val grid = node.obj("gridPlaylistRenderer")
+                when {
+                    lockup != null -> if (lockup.string("contentType") == "LOCKUP_CONTENT_TYPE_PLAYLIST") {
+                        add(
+                            lockup.string("contentId"),
+                            lockup.obj("metadata")?.obj("lockupMetadataViewModel")?.obj("title")?.string("content"),
+                        )
+                    }
+                    grid != null -> add(
+                        grid.string("playlistId"),
+                        grid.obj("title")?.let { it.string("simpleText") ?: (it["runs"] as? JsonArray)
+                            ?.joinToString("") { run -> (run as? JsonObject)?.string("text").orEmpty() } },
+                    )
+                    else -> node.values.forEach(::walk)
+                }
+            }
+            is JsonArray -> node.forEach(::walk)
+            else -> Unit
+        }
+    }
+    walk(root)
+    return out.toList()
+}
 
 internal val CLOCK_TIME = Regex("""\d{1,2}(:\d{2}){1,2}""")
 

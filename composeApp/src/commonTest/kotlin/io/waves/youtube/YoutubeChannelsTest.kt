@@ -159,12 +159,57 @@ class YoutubeChannelsTest {
     }
 
     @Test
-    fun aStoredArchiveIsListedWithoutAskingYoutube() = runTest {
-        val client = HttpClient(MockEngine { error("no requests") })
+    fun aStoredArchiveIsListedWithoutAskingWhetherTheChannelStreamed() = runTest {
+        val client = HttpClient(MockEngine { req ->
+            // Only the Playlists tab is asked for, and it has none.
+            assertTrue(req.url.encodedPath.endsWith("/browse"), req.url.toString())
+            respond("{}", HttpStatusCode.OK, jsonHeaders)
+        })
         val channelShow = Podcast(YoutubeUrls.feedUrl(channel), "Example Channel")
         val archive = Podcast(YoutubeUrls.liveArchiveFeedUrl(channel), "Example Channel · Lived", author = "Example Channel")
         assertEquals(listOf(channelShow, archive), YoutubeChannels(client).channelShows(channelShow, archive))
     }
+
+    @Test
+    fun aChannelsPlaylistsFollowItsArchive() = runTest {
+        val client = HttpClient(MockEngine { req ->
+            val body = (req.body as? TextContent)?.text.orEmpty()
+            when {
+                req.url.encodedPath.endsWith("/browse") && "params" in body -> respond(PLAYLISTS_TAB, HttpStatusCode.OK, jsonHeaders)
+                else -> respond("no", HttpStatusCode.NotFound)
+            }
+        })
+        val channelShow = Podcast(YoutubeUrls.feedUrl(channel), "Example Channel", artworkUrl = "https://yt3.example/a.jpg")
+        val archive = Podcast(YoutubeUrls.liveArchiveFeedUrl(channel), "Example Channel · Lived", author = "Example Channel")
+        val shows = YoutubeChannels(client).channelShows(channelShow, archive)
+        assertEquals(
+            listOf(channelShow.feedUrl, archive.feedUrl, YoutubeUrls.playlistFeedUrl(PLAYLIST), YoutubeUrls.playlistFeedUrl("PLolderLayoutList0000000000000000")),
+            shows.map { it.feedUrl },
+        )
+        assertEquals(listOf("Best Talks", "Older layout"), shows.drop(2).map { it.title })
+        // Covered and credited like the channel, as their own feeds have them.
+        assertTrue(shows.drop(2).all { it.author == "Example Channel" && it.artworkUrl == "https://yt3.example/a.jpg" })
+    }
+
+    @Test
+    fun playlistsTabLeavesOutListsThatAreNotShowsOfTheirOwn() {
+        val tail = channel.removePrefix("UC")
+        val parsed = parseChannelPlaylists(jsonObject(PLAYLISTS_TAB.replace("]}}}", """,
+            {"lockupViewModel":{"contentId":"UULV$tail","contentType":"LOCKUP_CONTENT_TYPE_PLAYLIST",
+              "metadata":{"lockupMetadataViewModel":{"title":{"content":"Live streams"}}}}},
+            {"lockupViewModel":{"contentId":"RDmixmixmixmix","contentType":"LOCKUP_CONTENT_TYPE_PLAYLIST",
+              "metadata":{"lockupMetadataViewModel":{"title":{"content":"Mix"}}}}},
+            {"lockupViewModel":{"contentId":"abcdefghijk","contentType":"LOCKUP_CONTENT_TYPE_VIDEO",
+              "metadata":{"lockupMetadataViewModel":{"title":{"content":"A video"}}}}}]}}}"""))!!)
+        assertEquals(listOf("Best Talks", "Older layout"), parsed.map { it.second })
+    }
+
+    private val PLAYLISTS_TAB = """
+        {"contents":{"richGridRenderer":{"contents":[
+          {"lockupViewModel":{"contentId":"$PLAYLIST","contentType":"LOCKUP_CONTENT_TYPE_PLAYLIST",
+            "metadata":{"lockupMetadataViewModel":{"title":{"content":"Best Talks"}}}}},
+          {"gridPlaylistRenderer":{"playlistId":"PLolderLayoutList0000000000000000","title":{"runs":[{"text":"Older layout"}]}}}]}}}
+    """.trimIndent()
 
     @Test
     fun aChannelThatNeverStreamedListsOnlyItself() = runTest {
