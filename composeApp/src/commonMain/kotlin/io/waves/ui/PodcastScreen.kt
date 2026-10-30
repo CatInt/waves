@@ -186,6 +186,13 @@ fun PodcastScreen(
             // The hero stays put; the gap opens under it, above the episodes.
             gapInContent = true,
         ) {
+            // Once the bar has its divider, episodes come to rest with theirs on it.
+            if (barPinned) {
+                SnapToTopLine(
+                    listState, topLine = { barPx }, snappable = { it.contentType == EpisodeRowType },
+                    reach = EpisodeSnapReach,
+                )
+            }
             LazyColumn(
                 Modifier.fillMaxSize()
                     .verticalFadingEdge(fadeLength = 0.dp, bottomFadeLength = floatingBarBottomGap()),
@@ -236,7 +243,7 @@ fun PodcastScreen(
                         )
                     }
                 }
-                itemsIndexed(ui.episodes) { index, row ->
+                itemsIndexed(ui.episodes, contentType = { _, _ -> EpisodeRowType }) { index, row ->
                     val isCurrent = playback.episode?.id == row.episode.id
                     EpisodeItem(
                         row = row,
@@ -417,6 +424,9 @@ private fun Hero(
         }
     }
 }
+
+/** The show page's episode rows, as against the hero and the notes above them. */
+private const val EpisodeRowType = "episode"
 
 private val HeroCoverSize = 200.dp
 
