@@ -21,6 +21,9 @@ import kotlinx.serialization.json.putJsonObject
  * The Atom feed lists the playlist's first 15 videos in playlist order, so a playlist that grows at the end
  * (oldest first) stops showing new videos once it has more than 15. When it fails, the same first videos on the
  * playlist's page stand in for it ([YoutubeWebFeed]).
+ *
+ * A channel's live streams list ([YoutubeUrls.liveArchiveFeedUrl]) is its live archive: titled after the channel, and
+ * only streams that have ended, so a stream still live or scheduled waits until there's a recording to play.
  */
 class YoutubePlaylists internal constructor(
     private val client: HttpClient,
@@ -30,15 +33,26 @@ class YoutubePlaylists internal constructor(
     constructor(client: HttpClient) : this(client, YoutubeChannels(client))
 
     suspend fun feed(feedUrl: String, playlistId: String): Feed = coroutineScope {
+        val live = YoutubeUrls.channelIdOfLiveList(playlistId) != null
         val pending = async { page(playlistId) }
-        val (parsed, owner) = try {
+        val (fetched, owner) = try {
             val xml = client.youtubeFeed(feedUrl, YoutubeUrls.playlistFeedUrl(playlistId))
-                ?: throw FeedFetchException("This YouTube playlist is private or no longer exists")
+                ?: throw FeedFetchException(
+                    if (live) "This channel hasn't streamed live" else "This YouTube playlist is private or no longer exists",
+                )
             YoutubeFeedParser.parse(feedUrl, xml) to YoutubeFeedParser.owner(xml)
         } catch (e: FeedFetchException) {
             val page = pending.await() ?: throw e
-            (web.feed(feedUrl, parseListedVideos(page)) ?: throw e) to parsePlaylistOwner(page)
+            val listed = parseListedVideos(page).let { videos -> if (live) videos.filter { it.seconds != null } else videos }
+            (web.feed(feedUrl, listed) ?: throw e) to parsePlaylistOwner(page)
         }
+        // The page shows a stream that's live or scheduled with a word badge where an ended one has its length.
+        val unfinished = if (live) {
+            pending.await()?.let(::parseListedVideos).orEmpty().filter { it.seconds == null }.map { it.id }.toSet()
+        } else {
+            emptySet()
+        }
+        val parsed = fetched.copy(episodes = fetched.episodes.filter { it.guid !in unfinished })
         val channelArt = async { owner?.let { channels.channelMetadata(it.channelId)?.artworkUrl } }
         val details = pending.await()?.let(::parsePlaylistDetails)
         val known = details?.durations.orEmpty()
@@ -49,7 +63,9 @@ class YoutubePlaylists internal constructor(
             .awaitAll().filterNotNull()
         val durations = known + looked
         val podcast = parsed.podcast.copy(
-            title = details?.title?.takeIf { it.isNotBlank() } ?: parsed.podcast.title,
+            // A live archive's own title is just "Live streams".
+            title = owner?.name?.takeIf { live }?.let(::liveArchiveTitle)
+                ?: details?.title?.takeIf { it.isNotBlank() } ?: parsed.podcast.title,
             // Always the channel, even when the playlist shares its name.
             author = owner?.name ?: parsed.podcast.author,
             description = details?.description?.takeIf { it.isNotBlank() } ?: parsed.podcast.description,
@@ -78,7 +94,7 @@ class YoutubePlaylists internal constructor(
     }
 
     /** The playlist's page, as `browse` returns it. Null when YouTube doesn't answer. */
-    private suspend fun page(playlistId: String): JsonObject? {
+    internal suspend fun page(playlistId: String): JsonObject? {
         val body = buildJsonObject {
             putJsonObject("context") { put("client", webClient()) }
             put("browseId", "VL$playlistId")
@@ -93,6 +109,9 @@ class YoutubePlaylists internal constructor(
         return jsonObject(text)
     }
 }
+
+/** A channel's live archive's title, after the channel: "NBC News · Lived". */
+fun liveArchiveTitle(channel: String) = "$channel · Lived"
 
 internal data class PlaylistDetails(
     val title: String?,

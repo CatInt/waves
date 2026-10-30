@@ -5,14 +5,20 @@ sealed interface YoutubeTarget {
     /** Channel id (`UC` + 22 chars), already known. */
     data class Channel(val id: String) : YoutubeTarget
 
-    /** `/@handle`, `/c/` or `/user/` — the channel id still has to be looked up. */
-    data class Vanity(val url: String) : YoutubeTarget
+    /**
+     * `/@handle`, `/c/` or `/user/` — the channel id still has to be looked up. [live] when the link is to the
+     * channel's Live tab, which stands for its [LiveArchive].
+     */
+    data class Vanity(val url: String, val live: Boolean = false) : YoutubeTarget
 
     /** A single video. The show is that video's channel. */
     data class Video(val id: String) : YoutubeTarget
 
     /** A public playlist. It becomes its own show, with the channel that made it as the creator. */
     data class Playlist(val id: String) : YoutubeTarget
+
+    /** A channel's past live streams, a show of their own apart from the channel's regular uploads. */
+    data class LiveArchive(val channelId: String) : YoutubeTarget
 }
 
 /**
@@ -31,6 +37,24 @@ object YoutubeUrls {
      */
     fun uploadsFeedUrl(channelId: String) =
         "https://www.youtube.com/feeds/videos.xml?playlist_id=UULF${channelId.removePrefix("UC")}"
+
+    /**
+     * Feed of the channel's live streams, its `UULV` playlist: past streams, plus any live or scheduled right now.
+     * Keyed like any playlist, so it's a show of its own. YouTube answers 404 for a channel that never streamed.
+     */
+    fun liveArchiveFeedUrl(channelId: String) = playlistFeedUrl(liveListId(channelId))
+
+    /** The channel's live streams list, `UULV` + the channel id after its `UC`. */
+    fun liveListId(channelId: String) = LIVE_PREFIX + channelId.removePrefix("UC")
+
+    fun isLiveArchive(url: String) = channelIdOfLiveArchive(url) != null
+
+    /** A channel's, playlist's or live archive's feed: a show from YouTube rather than from an RSS feed. */
+    fun isYoutubeShow(url: String) = channelIdOfFeed(url) != null || playlistIdOfFeed(url) != null
+
+    /** The channel whose live archive the feed at [url] is, or null for any other feed. */
+    fun channelIdOfLiveArchive(url: String): String? =
+        playlistIdOfFeed(url)?.let(::channelIdOfLiveList)
 
     fun watchUrl(videoId: String) = "https://www.youtube.com/watch?v=$videoId"
 
@@ -61,7 +85,7 @@ object YoutubeUrls {
     fun videoId(url: String): String? = when (val target = parse(url)) {
         is YoutubeTarget.Video -> target.id
         // A watch link opened from a playlist is still a playable video.
-        is YoutubeTarget.Playlist -> partsOf(url)?.let { videoIdIn(it) }
+        is YoutubeTarget.Playlist, is YoutubeTarget.LiveArchive -> partsOf(url)?.let { videoIdIn(it) }
         else -> null
     }
 
@@ -89,19 +113,23 @@ object YoutubeUrls {
             return queryParam(parts.query, "v")?.takeIf { isVideoId(it) }?.let { YoutubeTarget.Video(it) }
         }
         val root = siteRoot(host)
+        // A channel's Live tab (`/@name/streams`) stands for its live archive.
+        val live = segments.getOrNull(if (segments[0].startsWith("@")) 1 else 2).equals("streams", ignoreCase = true)
         return when (segments[0].lowercase()) {
-            "channel" -> segments.getOrNull(1)?.takeIf { isChannelId(it) }?.let { YoutubeTarget.Channel(it) }
+            "channel" -> segments.getOrNull(1)?.takeIf { isChannelId(it) }?.let {
+                if (live) YoutubeTarget.LiveArchive(it) else YoutubeTarget.Channel(it)
+            }
             "watch", "watch_popup" -> queryParam(parts.query, "v")?.takeIf { isVideoId(it) }?.let { YoutubeTarget.Video(it) }
             "shorts", "embed", "live", "v" -> segments.getOrNull(1)?.takeIf { isVideoId(it) }?.let { YoutubeTarget.Video(it) }
             "feeds" -> if (segments.getOrNull(1).equals("videos.xml", ignoreCase = true)) {
                 queryParam(parts.query, "channel_id")?.takeIf { isChannelId(it) }?.let { YoutubeTarget.Channel(it) }
             } else null
-            "c" -> segments.getOrNull(1)?.takeIf { it.isNotBlank() }?.let { YoutubeTarget.Vanity("$root/c/$it") }
-            "user" -> segments.getOrNull(1)?.takeIf { it.isNotBlank() }?.let { YoutubeTarget.Vanity("$root/user/$it") }
+            "c" -> segments.getOrNull(1)?.takeIf { it.isNotBlank() }?.let { YoutubeTarget.Vanity("$root/c/$it", live) }
+            "user" -> segments.getOrNull(1)?.takeIf { it.isNotBlank() }?.let { YoutubeTarget.Vanity("$root/user/$it", live) }
             else -> when {
                 segments[0].startsWith("@") -> {
                     val handle = segments[0].removePrefix("@")
-                    handle.takeIf { it.isNotBlank() }?.let { YoutubeTarget.Vanity("$root/@$it") }
+                    handle.takeIf { it.isNotBlank() }?.let { YoutubeTarget.Vanity("$root/@$it", live) }
                 }
                 else -> queryParam(parts.query, "v")?.takeIf { isVideoId(it) }?.let { YoutubeTarget.Video(it) }
             }
@@ -110,14 +138,19 @@ object YoutubeUrls {
 
     /**
      * The playlist a link names through `list=` (watch, `/playlist`, youtu.be) or `playlist_id=` (its feed). A
-     * channel's uploads list (`UU…`, `UULF…`) is that channel.
+     * channel's uploads list (`UU…`, `UULF…`) is that channel; its live streams list (`UULV…`), its live archive.
      */
     private fun playlistIn(parts: Parts): YoutubeTarget? {
         val id = queryParam(parts.query, "list") ?: queryParam(parts.query, "playlist_id") ?: return null
+        channelIdOfLiveList(id)?.let { return YoutubeTarget.LiveArchive(it) }
         val uploads = uploadsListPattern.matchEntire(id)
         if (uploads != null) return YoutubeTarget.Channel("UC" + uploads.groupValues[1])
         return id.takeIf { isPlaylistId(it) }?.let { YoutubeTarget.Playlist(it) }
     }
+
+    /** The channel whose live streams list (`UULV…`) [playlistId] is, or null for any other playlist. */
+    internal fun channelIdOfLiveList(playlistId: String): String? =
+        playlistId.takeIf { it.startsWith(LIVE_PREFIX) }?.let { "UC" + it.removePrefix(LIVE_PREFIX) }?.takeIf { isChannelId(it) }
 
     private fun videoIdIn(parts: Parts): String? {
         val host = parts.host.removePrefix("www.")
@@ -183,6 +216,7 @@ object YoutubeUrls {
         return out.toByteArray().decodeToString()
     }
 
+    private const val LIVE_PREFIX = "UULV"
     private val channelId = Regex("""UC[0-9A-Za-z_-]{22}""")
     private val videoIdPattern = Regex("""[0-9A-Za-z_-]{11}""")
     private val playlistIdPattern = Regex("""[0-9A-Za-z_-]{12,64}""")

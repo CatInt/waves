@@ -1,5 +1,6 @@
 package io.waves.sync
 
+import io.waves.model.Episode
 import io.waves.model.HistoryEntry
 import io.waves.model.PlaybackProgress
 import io.waves.model.Podcast
@@ -18,11 +19,15 @@ import io.waves.model.Podcast
 object SyncMerge {
     const val HISTORY_CAP = 2000
 
+    /** Archived episodes kept, newest first: years of a daily stream, at well under a megabyte gzipped. */
+    const val ARCHIVE_CAP = 2000
+
     fun merge(a: SyncState, b: SyncState): SyncState = SyncState(
         version = maxOf(a.version, b.version),
         subscriptions = mergeSubscriptions(a.subscriptions + b.subscriptions),
         progress = mergeProgress(a.progress + b.progress),
         history = mergeHistory(a.history + b.history),
+        archive = mergeArchive(a.archive + b.archive),
     )
 
     /** Canonical form of a single state (dedups and sorts); merge(s, s) == normalize(s). */
@@ -78,6 +83,25 @@ object SyncMerge {
             .thenBy { it.episodeId.toString() }
             .thenBy { it.episodeTitle }
             .thenBy { it.podcastTitle }
+
+    /**
+     * Copies of one archived episode differ only by when each device fetched it. Prefer one with a length (YouTube
+     * gives it separately, and a fetch can miss it); the rest is a deterministic tie-break.
+     */
+    private val archiveOrder: Comparator<Episode> =
+        compareBy<Episode> { it.durationSeconds != null }
+            .thenBy { it.publishedAtEpochMs ?: Long.MIN_VALUE }
+            .thenBy { it.toString() }
+
+    private fun mergeArchive(all: List<Episode>): List<Episode> =
+        all.groupBy { it.id }
+            .map { (_, copies) -> copies.maxWith(archiveOrder) }
+            .sortedWith(
+                compareByDescending<Episode> { it.publishedAtEpochMs ?: Long.MIN_VALUE }
+                    .thenBy { it.podcastFeedUrl }
+                    .thenBy { it.guid },
+            )
+            .take(ARCHIVE_CAP)
 
     private fun mergeSubscriptions(all: List<SubscriptionRecord>): List<SubscriptionRecord> =
         all.groupBy { it.podcast.feedUrl }

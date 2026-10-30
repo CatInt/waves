@@ -20,6 +20,7 @@ import io.waves.offline.PlaybackCache
 import io.waves.offline.SqlPlaybackCache
 import io.waves.youtube.YoutubeChannels
 import io.waves.youtube.YoutubeFeedRepository
+import io.waves.youtube.YoutubeUrls
 import io.waves.player.AudioPlayer
 import io.waves.search.ApplePodcastDirectory
 import io.waves.search.CachingPodcastDirectory
@@ -121,8 +122,12 @@ class AppGraph(
         enabled = combine(settings.settings, offline) { s, off -> s.syncEnabled && !off },
     )
 
-    /** Feed refresh reports episodes a non-empty fetch no longer lists. */
-    fun noteEpisodesAbsent(ids: Set<EpisodeId>) = cleaner.noteRemoved(ids)
+    /**
+     * Feed refresh reports episodes a non-empty fetch no longer lists. A live archive's feed only lists its newest
+     * streams, so one leaving it is still in the archive: its download stays.
+     */
+    fun noteEpisodesAbsent(ids: Set<EpisodeId>) =
+        cleaner.noteRemoved(ids.filterTo(HashSet()) { !YoutubeUrls.isLiveArchive(it.feedUrl) })
 
     private val _session = MutableStateFlow<AppSession?>(null)
     /** Null until the device id has been read from the database (a few ms after [start]). */

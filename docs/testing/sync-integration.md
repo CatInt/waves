@@ -164,3 +164,6 @@ queries alone, for example to `Setting.sq`, needs no migration.
   file is harmless clutter.
 - History is capped at 2000 entries in the sync file (`SyncMerge.HISTORY_CAP`). Local history beyond that stays
   local.
+- `archive` (a top-level key added within version 1) carries the stored episodes of followed YouTube live archives,
+  whose feed lists only the newest 15. Capped at the newest 2000 (`SyncMerge.ARCHIVE_CAP`). Import only adds
+  episodes a device lacks (or a length it lacks); it never overwrites one it already has.

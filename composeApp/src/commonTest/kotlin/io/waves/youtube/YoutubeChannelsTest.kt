@@ -7,6 +7,7 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.content.TextContent
 import io.ktor.http.headersOf
+import io.waves.model.Podcast
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -119,6 +120,136 @@ class YoutubeChannelsTest {
             YoutubeChannels(client).resolve("https://www.youtube.com/playlist?list=RDmix")
         }
         assertTrue(error.message!!.contains("playlist"))
+    }
+
+    @Test
+    fun liveTabLinkBecomesTheChannelsLiveArchive() = runTest {
+        val podcast = YoutubeChannels(liveClient()).resolve("https://www.youtube.com/channel/$channel/streams")
+        assertEquals(YoutubeUrls.liveArchiveFeedUrl(channel), podcast.feedUrl)
+        assertEquals("Example Channel · Lived", podcast.title)
+        assertEquals("Example Channel", podcast.author)
+        assertEquals("https://yt3.example/big.jpg", podcast.artworkUrl)
+    }
+
+    @Test
+    fun liveArchiveHasOnlyEndedStreams() = runTest {
+        val stored = YoutubeUrls.liveArchiveFeedUrl(channel)
+        val feed = YoutubeFeedRepository(liveClient()).fetch(stored)
+        // On now, and scheduled: nothing to play back yet.
+        assertEquals(listOf("abcdefghijk", "lmnopqrstuv"), feed.episodes.map { it.guid })
+        assertEquals(listOf(2603L, 3725L), feed.episodes.map { it.durationSeconds })
+        assertEquals("Example Channel · Lived", feed.podcast.title)
+        assertEquals(YoutubeUrls.feedUrl(channel), YoutubeChannels(liveClient()).creator(stored)!!.feedUrl)
+    }
+
+    @Test
+    fun channelThatNeverStreamedSaysSo() = runTest {
+        val client = HttpClient(MockEngine { respond("no", HttpStatusCode.NotFound) })
+        val error = assertFailsWith<YoutubeException> { YoutubeChannels(client).liveArchive(channel) }
+        assertTrue(error.message!!.contains("streamed live"), error.message)
+    }
+
+    @Test
+    fun aChannelLinkListsTheChannelThenItsLiveArchive() = runTest {
+        val shows = YoutubeChannels(liveClient()).shows("https://www.youtube.com/channel/$channel")
+        assertEquals(listOf(YoutubeUrls.feedUrl(channel), YoutubeUrls.liveArchiveFeedUrl(channel)), shows.map { it.feedUrl })
+        assertEquals("Example Channel · Lived", shows[1].title)
+        assertEquals("Example Channel", shows[1].author)
+        assertEquals(shows[0].artworkUrl, shows[1].artworkUrl)
+    }
+
+    @Test
+    fun aStoredArchiveIsListedWithoutAskingYoutube() = runTest {
+        val client = HttpClient(MockEngine { error("no requests") })
+        val channelShow = Podcast(YoutubeUrls.feedUrl(channel), "Example Channel")
+        val archive = Podcast(YoutubeUrls.liveArchiveFeedUrl(channel), "Example Channel · Lived", author = "Example Channel")
+        assertEquals(listOf(channelShow, archive), YoutubeChannels(client).channelShows(channelShow, archive))
+    }
+
+    @Test
+    fun aChannelThatNeverStreamedListsOnlyItself() = runTest {
+        val client = HttpClient(MockEngine { req ->
+            if (req.url.encodedPath.endsWith("/browse") && "\"$channel\"" in (req.body as TextContent).text) {
+                respond(BROWSE, HttpStatusCode.OK, jsonHeaders)
+            } else {
+                respond("no", HttpStatusCode.NotFound)
+            }
+        })
+        assertEquals(listOf(YoutubeUrls.feedUrl(channel)), YoutubeChannels(client).shows("https://www.youtube.com/channel/$channel").map { it.feedUrl })
+    }
+
+    @Test
+    fun aChannelWithStreamsHasALiveArchive() = runTest {
+        assertEquals(true, YoutubeChannels(liveClient()).hasLiveArchive(channel))
+    }
+
+    @Test
+    fun hasLiveArchiveAsksThePageWhenTheFeedIsDownAndCountsOnlyEndedStreams() = runTest {
+        var pageRequests = 0
+        fun client(badges: List<String>) = HttpClient(MockEngine { req ->
+            when {
+                req.url.encodedPath.endsWith("/feeds/videos.xml") -> respond("no", HttpStatusCode.NotFound)
+                req.url.encodedPath.endsWith("/browse") -> {
+                    pageRequests++
+                    respond(
+                        """{"contents":{"richGridRenderer":{"contents":[${badges.mapIndexed { i, b -> liveLockup("liveVideo0$i", b) }.joinToString(",")}]}}}""",
+                        HttpStatusCode.OK, jsonHeaders,
+                    )
+                }
+                else -> respond("no", HttpStatusCode.NotFound)
+            }
+        })
+        val ended = YoutubeChannels(client(listOf("LIVE", "1:02:05")))
+        assertEquals(true, ended.hasLiveArchive(channel))
+        assertEquals(true, ended.hasLiveArchive(channel))
+        assertEquals(1, pageRequests) // remembered
+        assertEquals(false, YoutubeChannels(client(listOf("LIVE", "Upcoming"))).hasLiveArchive(channel))
+    }
+
+    @Test
+    fun hasLiveArchiveIsUnknownWhenYoutubeDoesNotAnswer() = runTest {
+        val client = HttpClient(MockEngine { respond("down", HttpStatusCode.InternalServerError) })
+        assertEquals(null, YoutubeChannels(client).hasLiveArchive(channel))
+    }
+
+    private fun liveLockup(id: String, badge: String) =
+        """{"richItemRenderer":{"content":{"lockupViewModel":{"contentId":"$id","contentType":"LOCKUP_CONTENT_TYPE_VIDEO",
+            "contentImage":{"thumbnailViewModel":{"overlays":[{"thumbnailBottomOverlayViewModel":{"badges":[
+              {"thumbnailBadgeViewModel":{"text":"$badge"}}]}}]}}}}}}"""
+
+    private fun liveClient(): HttpClient {
+        val list = YoutubeUrls.liveListId(channel)
+        val page = """
+            {"metadata":{"playlistMetadataRenderer":{"title":"Live streams"}},
+             "contents":{"richGridRenderer":{"contents":[
+               ${liveLockup("liveNow0001", "LIVE")},${liveLockup("abcdefghijk", "43:23")},
+               ${liveLockup("upcoming001", "Upcoming")},${liveLockup("lmnopqrstuv", "1:02:05")}]}}}
+        """.trimIndent()
+        return HttpClient(MockEngine { req ->
+            when {
+                req.url.parameters["playlist_id"] == list -> respond(
+                    """
+                    <feed xmlns:yt="http://www.youtube.com/xml/schemas/2015" xmlns="http://www.w3.org/2005/Atom">
+                      <yt:playlistId>$list</yt:playlistId>
+                      <yt:channelId>$channel</yt:channelId>
+                      <title>Live streams</title>
+                      <author><name>Example Channel</name><uri>https://www.youtube.com/channel/$channel</uri></author>
+                      <entry><yt:videoId>liveNow0001</yt:videoId><title>On now</title></entry>
+                      <entry><yt:videoId>abcdefghijk</yt:videoId><title>Last week</title></entry>
+                      <entry><yt:videoId>upcoming001</yt:videoId><title>Tomorrow</title></entry>
+                      <entry><yt:videoId>lmnopqrstuv</yt:videoId><title>Before that</title></entry>
+                    </feed>
+                    """.trimIndent(),
+                    HttpStatusCode.OK,
+                    headersOf(HttpHeaders.ContentType, "application/atom+xml"),
+                )
+                req.url.encodedPath.endsWith("/browse") && "VL$list" in (req.body as TextContent).text ->
+                    respond(page, HttpStatusCode.OK, jsonHeaders)
+                req.url.encodedPath.endsWith("/browse") && "\"$channel\"" in (req.body as TextContent).text ->
+                    respond(BROWSE, HttpStatusCode.OK, jsonHeaders)
+                else -> respond("no", HttpStatusCode.NotFound)
+            }
+        })
     }
 
     private fun playlistClient(
