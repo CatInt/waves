@@ -101,6 +101,8 @@ fun PodcastScreen(
     /** Null leaves the creator name as plain text. */
     onAuthorClick: ((String) -> Unit)? = null,
     authorClickLabel: (String) -> String = { "Search podcasts by $it" },
+    /** The creator line when the feed names no author: a YouTube channel's own page names the channel. */
+    creatorName: String? = null,
     /** The tapped cover this page's cover grows out of; null fades the cover in with the background instead. */
     origin: CoverOrigin? = null,
     /** How far the page's background (and the hero's gradient) has faded in: 0 shut (or closed again), 1 fully open. */
@@ -213,6 +215,7 @@ fun PodcastScreen(
                         onToggleSubscribe = state::toggleSubscribe,
                         onAuthorClick = onAuthorClick,
                         authorClickLabel = authorClickLabel,
+                        creator = ui.podcast.author?.takeIf { it.isNotBlank() } ?: creatorName,
                     )
                 }
                 item(key = "pull") { PullGap() }
@@ -329,6 +332,7 @@ private fun Hero(
     onToggleSubscribe: () -> Unit,
     onAuthorClick: ((String) -> Unit)?,
     authorClickLabel: (String) -> String,
+    creator: String?,
 ) {
     val ink = colors.onContainer
     val page = MaterialTheme.colorScheme.background
@@ -346,6 +350,7 @@ private fun Hero(
             ui.podcast.artworkUrl, ui.podcast.title,
             coverModifier.shadow(16.dp, RoundedCornerShape(HeroCoverCorner)),
             size = HeroCoverSize, corner = HeroCoverCorner, onLoaded = onCoverLoaded,
+            liveArchive = ui.podcast.isLiveArchive,
         )
         Spacer(Modifier.height(16.dp))
         Column(contentModifier, horizontalAlignment = Alignment.CenterHorizontally) {
@@ -354,7 +359,7 @@ private fun Hero(
                 textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.fadeUnder(fadeLine),
             )
-            ui.podcast.author?.takeIf { it.isNotBlank() }?.let { author ->
+            creator?.let { author ->
                 Row(
                     Modifier.padding(top = 2.dp).fadeUnder(fadeLine).clip(CircleShape)
                         .then(
@@ -496,6 +501,11 @@ private fun CoverMorph(
     // Read only while laying out and drawing, so scrolling and the flight move the cover without recomposing it.
     val shrink = { MorphShrinkEasing.transform(fraction()) }
     val lift = { if (origin == null) 1f else flight() }
+    val density = LocalDensity.current
+    val ribbonSide = {
+        if (origin == null) HeroCoverSize
+        else with(density) { lerp(origin.first.minDimension.toDp(), HeroCoverSize, flight()) }
+    }
     val bounds = {
         // Both ease in slowly; the slide toward the chip and the narrowing trail the shrink, so the cover travels on an arc.
         val shrunk = shrink()
@@ -546,7 +556,9 @@ private fun CoverMorph(
     ) {
         Artwork(
             ui.podcast.artworkUrl, ui.podcast.title, Modifier.matchParentSize(), corner = 0.dp,
-            alignment = BiasAlignment(0f, bias), placeholderKey = coverKey,
+            alignment = BiasAlignment(0f, bias), placeholderKey = coverKey, liveArchive = ui.podcast.isLiveArchive,
+            // Follows the cover's flight between screens, but not its collapse into the bar.
+            ribbonFor = ribbonSide,
             onLoaded = {
                 if (!loaded) {
                     loaded = true
