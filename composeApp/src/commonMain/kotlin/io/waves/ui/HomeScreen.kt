@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -89,12 +90,16 @@ fun HomeScreen(
                     // A finished refresh re-sorts Up next; the rows slide into their new order before the list springs back.
                     settleMillis = RowMoveMillis,
                 ) {
+                    val list = rememberLazyListState()
+                    // Rows come to rest with their divider on the shelf's, not a sliver above or below it.
+                    if (pinned) SnapToTopLine(list, reach = EpisodeSnapReach)
                     LazyColumn(
                         Modifier.fillMaxSize()
                             .verticalFadingEdge(
                                 fadeLength = if (pinned) 0.dp else 8.dp,
                                 bottomFadeLength = floatingBarBottomGap(),
                             ),
+                        state = list,
                         // Under the shelf, rows start below its divider.
                         contentPadding = listContentPadding(top = if (pinned) ListDividerHeight else 0.dp),
                     ) {
