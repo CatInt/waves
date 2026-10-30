@@ -186,15 +186,17 @@ fun PodcastScreen(
             // The hero stays put; the gap opens under it, above the episodes.
             gapInContent = true,
         ) {
-            // Once the bar has its divider, episodes come to rest with theirs on it.
+            // Once the bar has its divider, episodes come to rest with theirs on it, and never with it across a title.
+            val guides = rememberSnapGuides()
             if (barPinned) {
                 SnapToTopLine(
                     listState, topLine = { barPx }, snappable = { it.contentType == EpisodeRowType },
-                    reach = EpisodeSnapReach,
+                    reach = EpisodeSnapReach, guides = guides,
                 )
             }
             LazyColumn(
                 Modifier.fillMaxSize()
+                    .snapGuideList(guides)
                     .verticalFadingEdge(fadeLength = 0.dp, bottomFadeLength = floatingBarBottomGap()),
                 state = listState,
                 contentPadding = listContentPadding(top = 0.dp),
@@ -258,6 +260,7 @@ fun PodcastScreen(
                         dividerBelow = index < ui.episodes.lastIndex,
                         onToggleComplete = onSetCompleted?.let { { it(row.episode, !row.played) } },
                         modifier = shown,
+                        snapGuides = guides,
                     )
                 }
             }
