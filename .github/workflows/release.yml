@@ -39,7 +39,7 @@ jobs:
           path: dist/
 
   macos:
-    runs-on: macos-14 # Apple Silicon
+    runs-on: macos-15 # Apple Silicon; macos-14 is retired on 2026-11-02
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
