@@ -25,3 +25,12 @@ ORDER BY publishedAt IS NULL, publishedAt DESC, title;
 
 byId:
 SELECT * FROM episode WHERE feedUrl = ? AND guid = ?;
+
+-- From sync: a device that already has the episode keeps its own copy (fillDuration still gives it a length it lacks).
+insertIfAbsent:
+INSERT OR IGNORE INTO episode(feedUrl, guid, title, audioUrl, publishedAt, durationSeconds, description, artworkUrl)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+fillDuration:
+UPDATE episode SET durationSeconds = :durationSeconds
+WHERE feedUrl = :feedUrl AND guid = :guid AND durationSeconds IS NULL;

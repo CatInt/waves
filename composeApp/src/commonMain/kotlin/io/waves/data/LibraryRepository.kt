@@ -45,7 +45,8 @@ interface LibraryRepository {
     suspend fun exportSyncState(): io.waves.sync.SyncState
     /**
      * Merge a snapshot from sync into local state (never a blind replace): subscriptions and progress are
-     * last-writer-wins per key using the same rules as [io.waves.sync.SyncMerge], history is unioned.
+     * last-writer-wins per key using the same rules as [io.waves.sync.SyncMerge], history is unioned, and archived
+     * episodes are added where missing.
      * Local changes newer than the snapshot survive.
      */
     suspend fun importSyncState(state: io.waves.sync.SyncState)

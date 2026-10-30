@@ -1,5 +1,6 @@
 package io.waves.sync
 
+import io.waves.model.Episode
 import io.waves.model.EpisodeId
 import io.waves.model.HistoryEntry
 import io.waves.model.PlaybackProgress
@@ -48,6 +49,19 @@ class DefaultSyncServiceTest {
         assertEquals(expected, remoteState(cloud))
         assertEquals(expected, library.stateFlow.value)
         assertEquals(1, library.imports)
+    }
+
+    @Test
+    fun archivedEpisodesReachTheOtherDevice() = runTest {
+        val stream = Episode(guid = "abcdefghijk", podcastFeedUrl = "live", title = "Fell off the feed", audioUrl = "a", publishedAtEpochMs = 1)
+        val cloud = FakeCloudStore()
+        cloud.files[name] = json.encodeToString(SyncState.serializer(), SyncState(archive = listOf(stream))) to 1
+        val library = FakeLibrary(SyncState(subscriptions = listOf(sub("live"))))
+
+        DefaultSyncService(library, cloud).syncNow()
+
+        assertEquals(listOf(stream), library.stateFlow.value.archive)
+        assertEquals(listOf(stream), remoteState(cloud).archive)
     }
 
     @Test
