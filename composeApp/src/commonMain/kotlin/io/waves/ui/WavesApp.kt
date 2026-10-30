@@ -8,6 +8,7 @@ import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -332,22 +333,32 @@ private fun CurrentScreen(
                 val origin = remember(screen) { origins.take(screen.podcast.feedUrl) }
                 DisposableEffect(origin) { onDispose { origins.landed(origin) } }
                 val rest = with(density) { heroCoverRest(width, statusBarTop) }
+                // Left by a tab switch (a creator line opens Discover's search), the page goes at once: its cover
+                // would fly home to a tile that's gone from the screen, and hang there until it arrived.
+                val leftForTab = nav.jumped && screens.targetState.screen is Screen.Root
                 // All 0 while the page is shut (not yet open, or closed again) and 1 once open: the background's fade,
                 // the same for every show; the cover's flight out of its tile, timed by how far it goes; and the fade
                 // of everything else, which follows the background and the cover in and, on the way out, is gone
                 // before the background.
                 val entry by transition.animateFloat(
                     transitionSpec = {
-                        if (targetState == EnterExitState.Visible) tween(BackdropEnterMillis, easing = ScreenTransitionEasing)
-                        else tween(BackdropExitMillis, easing = ScreenTransitionEasing)
+                        when {
+                            targetState == EnterExitState.Visible -> tween(BackdropEnterMillis, easing = ScreenTransitionEasing)
+                            leftForTab -> snap()
+                            else -> tween(BackdropExitMillis, easing = ScreenTransitionEasing)
+                        }
                     },
                     label = "entry",
                 ) { if (it == EnterExitState.Visible) 1f else 0f }
                 val flight by transition.animateFloat(
                     transitionSpec = {
                         val closing = targetState != EnterExitState.Visible
-                        val millis = origin?.let { with(density) { coverFlightMillis(it.bounds, rest, closing) } }
-                        tween(millis ?: BackdropEnterMillis, easing = if (closing) CoverReturnEasing else ScreenTransitionEasing)
+                        if (closing && leftForTab) {
+                            snap()
+                        } else {
+                            val millis = origin?.let { with(density) { coverFlightMillis(it.bounds, rest, closing) } }
+                            tween(millis ?: BackdropEnterMillis, easing = if (closing) CoverReturnEasing else ScreenTransitionEasing)
+                        }
                     },
                     label = "flight",
                 ) { if (it == EnterExitState.Visible) 1f else 0f }
@@ -356,6 +367,8 @@ private fun CurrentScreen(
                         if (targetState == EnterExitState.Visible) {
                             val flightMillis = origin?.let { with(density) { coverFlightMillis(it.bounds, rest, closing = false) } }
                             tween(ContentEnterMillis, delayMillis = contentEnterDelayMillis(flightMillis), easing = LinearOutSlowInEasing)
+                        } else if (leftForTab) {
+                            snap()
                         } else {
                             tween(ContentExitMillis, easing = FastOutLinearInEasing)
                         }

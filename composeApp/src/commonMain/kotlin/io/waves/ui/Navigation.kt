@@ -1,6 +1,9 @@
 package io.waves.ui
 
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import io.waves.model.Podcast
 
 /** Bottom navigation / rail order. [Home] is the app's entry point. */
@@ -28,13 +31,22 @@ class Navigator(private val start: Tab = Tab.Home) {
     val canGoBack: Boolean get() = stack.size > 1 || currentTab != start
     val backStack: List<Screen> get() = stack.toList()
 
+    /**
+     * The last move was a [select], which drops every screen at once, rather than a [push] or a [pop] back to the
+     * screen beneath. A screen closed that way has nowhere on screen to go back to.
+     */
+    var jumped by mutableStateOf(false)
+        private set
+
     /** Switch tab; re-selecting the current tab pops back to its root. */
     fun select(tab: Tab) {
+        jumped = true
         stack.clear()
         stack.add(Screen.Root(tab))
     }
 
     fun push(screen: Screen) {
+        jumped = false
         if (stack.last() == screen) return
         if (screen == Screen.NowPlaying) stack.remove(Screen.NowPlaying)
         stack.add(screen)
@@ -42,6 +54,7 @@ class Navigator(private val start: Tab = Tab.Home) {
 
     fun pop(): Boolean {
         if (stack.size > 1) {
+            jumped = false
             stack.removeAt(stack.lastIndex)
             return true
         }
