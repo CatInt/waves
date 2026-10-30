@@ -54,9 +54,31 @@ class SchemaMigrationTest {
             .map { it.replace(Regex("\\s+"), " ").replace("IF NOT EXISTS ", "").trim() }
 
     @Test fun schemaVersionMatchesSnapshots() {
-        assertEquals(5L, WavesDatabase.Schema.version)
+        assertEquals(6L, WavesDatabase.Schema.version)
         // Every released version needs a snapshot so verifySqlDelightMigration can check its upgrade path.
         for (v in 1..WavesDatabase.Schema.version) assertTrue(File(snapshots, "$v.db").isFile, "missing $v.db")
+    }
+
+    @Test fun liveArchivesSavedUnderAnOldSuffixTakeTodays() {
+        val file = File(dir, "waves.db")
+        File(snapshots, "5.db").copyTo(file)
+        val archive = "https://www.youtube.com/feeds/videos.xml?playlist_id=UULVexampleChannel00000000"
+        val other = "https://www.youtube.com/feeds/videos.xml?playlist_id=UULVanotherChannel00000000"
+        raw(file) { d ->
+            d.execute(null, "PRAGMA user_version = 5", 0)
+            d.execute(null, "INSERT INTO podcast VALUES ('$archive', '三個水槍手 · Live', NULL, NULL, NULL, NULL, 1, 1000)", 0)
+            d.execute(null, "INSERT INTO podcast VALUES ('$other', 'NBC News · Live Archive', NULL, NULL, NULL, NULL, 0, NULL)", 0)
+            d.execute(null, "INSERT INTO podcast VALUES ('https://p/feed', 'Live', NULL, NULL, NULL, NULL, 1, 1000)", 0)
+        }
+        val driver = createDesktopDriver(file)
+        try {
+            assertEquals(
+                listOf("Live", "NBC News · Lived", "三個水槍手 · Lived"),
+                driver.strings("SELECT title FROM podcast ORDER BY feedUrl"),
+            )
+        } finally {
+            driver.close()
+        }
     }
 
     @Test fun v1DatabaseIsMigratedAndKeepsItsData() = runBlocking<Unit> {

@@ -1,0 +1,6 @@
+-- Schema version 5 -> 6, data only: live archives (YouTube UULV lists) saved under an earlier title suffix take today's.
+UPDATE podcast SET title = substr(title, 1, length(title) - length(' · Live Archive')) || ' · Lived'
+WHERE feedUrl LIKE '%playlist_id=UULV%' AND title LIKE '% · Live Archive';
+
+UPDATE podcast SET title = substr(title, 1, length(title) - length(' · Live')) || ' · Lived'
+WHERE feedUrl LIKE '%playlist_id=UULV%' AND title LIKE '% · Live';
