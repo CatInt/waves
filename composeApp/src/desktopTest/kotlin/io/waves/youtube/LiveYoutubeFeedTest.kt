@@ -51,6 +51,10 @@ class LiveYoutubeFeedTest {
 
             val creator = channels.creator(podcast.feedUrl)!!
             assertEquals("https://www.youtube.com/feeds/videos.xml?channel_id=UCSHZKyawb77ixDdsGog4iWA", creator.feedUrl)
+            // The channel lists its playlists among its shows (the Playlists tab's first page).
+            val shows = channels.channelShows(creator)
+            println("channel shows: ${shows.map { it.title }}")
+            assertTrue(shows.count { YoutubeUrls.playlistIdOfFeed(it.feedUrl) != null } > 5)
         }
     }
 

@@ -173,6 +173,7 @@ private fun ShowShelf(shows: List<Podcast>, onOpenPodcast: (Podcast) -> Unit, mo
                     Artwork(
                         podcast.artworkUrl, podcast.title, anchor.modifier, size = ShelfCoverSize, corner = 9.dp,
                         onLoaded = anchor.onLoaded, liveArchive = podcast.isLiveArchive,
+                        playlist = podcast.playlistId,
                     )
                 }
             }

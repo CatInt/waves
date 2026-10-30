@@ -350,7 +350,7 @@ private fun Hero(
             ui.podcast.artworkUrl, ui.podcast.title,
             coverModifier.shadow(16.dp, RoundedCornerShape(HeroCoverCorner)),
             size = HeroCoverSize, corner = HeroCoverCorner, onLoaded = onCoverLoaded,
-            liveArchive = ui.podcast.isLiveArchive,
+            liveArchive = ui.podcast.isLiveArchive, playlist = ui.podcast.playlistId,
         )
         Spacer(Modifier.height(16.dp))
         Column(contentModifier, horizontalAlignment = Alignment.CenterHorizontally) {
@@ -557,6 +557,7 @@ private fun CoverMorph(
         Artwork(
             ui.podcast.artworkUrl, ui.podcast.title, Modifier.matchParentSize(), corner = 0.dp,
             alignment = BiasAlignment(0f, bias), placeholderKey = coverKey, liveArchive = ui.podcast.isLiveArchive,
+            playlist = ui.podcast.playlistId,
             // Follows the cover's flight between screens, but not its collapse into the bar.
             ribbonFor = ribbonSide,
             onLoaded = {
