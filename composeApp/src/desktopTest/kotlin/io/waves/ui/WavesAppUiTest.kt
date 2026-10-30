@@ -267,6 +267,23 @@ class WavesAppUiTest {
                 onAllNodesWithText("Slow Radio").fetchSemanticsNodes().isNotEmpty()
         }
     }
+
+    @Test
+    fun showPageLeftForTheCreatorsSearchGoesAtOnce() = runComposeUiTest {
+        val deps = fakeDependencies(playerTickMs = 60 * 60 * 1000L)
+        setContent { App(deps) }
+        onNode(navTab("Discover")).performClick()
+        waitForText("Slow Radio")
+        onAllNodesWithText("Slow Radio").onFirst().performClick()
+        waitForText("Slow Radio: Episode 1")
+
+        mainClock.autoAdvance = false
+        onNodeWithText("The Quiet Studio").performClick()
+        // A couple of frames, not the cover's flight home.
+        mainClock.advanceTimeBy(50)
+        assertTrue(onAllNodesWithText("Slow Radio: Episode 1").fetchSemanticsNodes().isEmpty())
+        mainClock.autoAdvance = true
+    }
 }
 
 private const val TOP_CHARTS_ONLY = "Kotlin Weekly Audio"
