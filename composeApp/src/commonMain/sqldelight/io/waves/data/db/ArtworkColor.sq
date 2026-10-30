@@ -10,3 +10,6 @@ SELECT url, argb FROM artwork_color;
 
 put:
 INSERT OR REPLACE INTO artwork_color(url, argb) VALUES (?, ?);
+
+delete:
+DELETE FROM artwork_color WHERE url = ?;

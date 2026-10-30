@@ -101,6 +101,7 @@ private val AppTypography = appTypography()
 class AppState(deps: AppDependencies, scope: kotlinx.coroutines.CoroutineScope) {
     val navigator = Navigator()
     val artworkColors = deps.artworkColors
+    val playlistColors = PlaylistColors(deps.artworkColors).also { it.start(scope, deps.library.subscriptions) }
     val playback = PlaybackController(
         deps.player, deps.library, deps.deviceId, scope, deps.onLocalChange, settings = deps.settings.settings,
         restoreLastSession = true, session = deps.playbackSession,
@@ -167,7 +168,7 @@ fun WavesApp(deps: AppDependencies, app: AppState = remember(deps) { AppState(de
     }
     val playFromHistory: (HistoryEntry) -> Unit = { entry -> playById(entry.episodeId, entry.podcastTitle) }
 
-    WavesTheme(app.artworkColors) {
+    WavesTheme(app.artworkColors) { CompositionLocalProvider(LocalPlaylistColors provides app.playlistColors) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val isLandscape = maxWidth > maxHeight
             val inset = contentInset(maxWidth, isLandscape)
@@ -238,7 +239,7 @@ fun WavesApp(deps: AppDependencies, app: AppState = remember(deps) { AppState(de
                 }
             }
         }
-    }
+    } }
 }
 
 @Composable
@@ -466,8 +467,9 @@ private fun RootTabStrip(nav: Navigator, pager: PagerState, stripSlot: TabStripS
 private data class Shown(val screen: Screen, val depth: Int)
 
 /**
- * The YouTube channel behind [show] and its live archive, as Discover lists them under the creator's name: the shows
- * already stored where there are, else as YouTube names them. Empty when YouTube doesn't say whose [show] is.
+ * The YouTube channel behind [show], its live archive and its playlists, as Discover lists them under the creator's
+ * name: the shows already stored where there are, else as YouTube names them. Empty when YouTube doesn't say whose
+ * [show] is.
  */
 private suspend fun youtubeCreatorShows(show: Podcast, youtube: YoutubeChannels, library: LibraryRepository): List<Podcast> {
     val channelId = YoutubeUrls.channelIdOfFeed(show.feedUrl) ?: YoutubeUrls.channelIdOfLiveArchive(show.feedUrl)
@@ -489,5 +491,6 @@ private suspend fun youtubeCreatorShows(show: Podcast, youtube: YoutubeChannels,
     } ?: return emptyList()
     val archiveUrl = YoutubeUrls.liveArchiveFeedUrl(YoutubeUrls.channelIdOfFeed(channel.feedUrl) ?: return listOf(channel))
     val archive = if (show.feedUrl == archiveUrl) show else library.podcast(archiveUrl)
-    return youtube.channelShows(channel, archive)
+    // Shows already stored (followed, or opened before) as the library has them.
+    return youtube.channelShows(channel, archive).map { library.podcast(it.feedUrl) ?: it }
 }

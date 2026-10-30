@@ -107,7 +107,7 @@ private fun SearchResults(ui: DiscoverUiState, onOpenPodcast: (Podcast) -> Unit)
                 ) {
                     Artwork(
                         podcast.artworkUrl, podcast.title, anchor.modifier, size = 48.dp, onLoaded = anchor.onLoaded,
-                        liveArchive = podcast.isLiveArchive,
+                        liveArchive = podcast.isLiveArchive, playlist = podcast.playlistId,
                     )
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(podcast.title, style = listTitleStyle(), maxLines = 2, overflow = TextOverflow.Ellipsis)

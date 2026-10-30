@@ -36,7 +36,7 @@ data class DiscoverUiState(
 /**
  * Apple top charts + debounced search. Pasting a podcasts.apple.com link resolves it via lookup; pasting a
  * YouTube channel (or video) link resolves the channel as a show via [resolveYoutube], followed by its live archive
- * when it has one; a playlist link, the playlist.
+ * when it has one and its playlists; a playlist link, the playlist.
  * Charts and search use the store [country] (e.g. `UserSettings.effectiveCountry`); both reload when it changes.
  */
 @OptIn(FlowPreview::class)

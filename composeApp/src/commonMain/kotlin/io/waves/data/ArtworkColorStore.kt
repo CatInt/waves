@@ -17,12 +17,18 @@ interface ArtworkColorStore {
     /** The stored colour for [url], or null when none has been picked yet. Never blocks. */
     fun get(url: String): Int?
     suspend fun put(url: String, argb: Int)
+
+    /** Every stored entry, by key. */
+    fun all(): Map<String, Int>
+    suspend fun remove(url: String)
 }
 
 class InMemoryArtworkColorStore : ArtworkColorStore {
     private val colors = MutableStateFlow<Map<String, Int>>(emptyMap())
     override fun get(url: String): Int? = colors.value[url]
     override suspend fun put(url: String, argb: Int) = colors.update { it + (url to argb) }
+    override fun all(): Map<String, Int> = colors.value
+    override suspend fun remove(url: String) = colors.update { it - url }
 }
 
 /**
@@ -42,5 +48,13 @@ class SqlArtworkColorStore(
         if (colors.value[url] == argb) return
         colors.update { it + (url to argb) }
         withContext(ioContext) { queries.put(url, argb.toLong()) }
+    }
+
+    override fun all(): Map<String, Int> = colors.value
+
+    override suspend fun remove(url: String) {
+        if (url !in colors.value) return
+        colors.update { it - url }
+        withContext(ioContext) { queries.delete(url) }
     }
 }
