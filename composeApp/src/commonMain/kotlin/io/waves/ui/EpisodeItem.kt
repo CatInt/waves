@@ -95,6 +95,8 @@ fun EpisodeItem(
     dividerBelow: Boolean = false,
     dividerAbove: Boolean = false,
     onToggleComplete: (() -> Unit)? = null,
+    /** The list's [SnapGuides], which keep its top divider from resting across the row's text. */
+    snapGuides: SnapGuides? = null,
 ) {
     val episode = row.episode
     val colors = MaterialTheme.colorScheme
@@ -117,7 +119,8 @@ fun EpisodeItem(
         if (show != null) {
             val anchor = rememberCoverAnchor(show.feedUrl, corner = 5.dp)
             Row(
-                Modifier.padding(end = 8.dp, bottom = 4.dp).then(
+                // The list's top divider comes to rest above or below each block of the row, never across one.
+                Modifier.padding(end = 8.dp, bottom = 4.dp).keepWhole(snapGuides).then(
                     if (onOpenShow != null) {
                         Modifier.clickable(
                             interactionSource = null, indication = null,
@@ -148,10 +151,12 @@ fun EpisodeItem(
                 }
             }
         } else if (age != null || badge != null) {
-            AgeLine(age, badge, Modifier.padding(bottom = if (artworkUrl != null) 6.dp else 2.dp))
+            AgeLine(
+                age, badge, Modifier.padding(bottom = if (artworkUrl != null) 6.dp else 2.dp).keepWhole(snapGuides),
+            )
         }
         Row(
-            Modifier.padding(end = 8.dp),
+            Modifier.padding(end = 8.dp).keepWhole(snapGuides),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(ListRowGap),
         ) {
@@ -172,10 +177,10 @@ fun EpisodeItem(
                 style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 16.sp),
                 color = colors.onSurfaceVariant,
                 maxLines = 2, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(top = 2.dp, end = 8.dp),
+                modifier = Modifier.padding(top = 2.dp, end = 8.dp).keepWhole(snapGuides),
             )
         }
-        Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.padding(top = 4.dp).keepWhole(snapGuides), verticalAlignment = Alignment.CenterVertically) {
             CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides RowControlSize) {
                 PlayPill(row, isCurrent, isPlaying, showArtworkUrl, onClick = if (isPlaying) onPause else onPlay)
                 Spacer(Modifier.width(6.dp))
