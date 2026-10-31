@@ -238,6 +238,18 @@ class DownloadsStateTest {
     }
 
     @Test
+    fun tapOnACachedEpisodeDownloadsIt() = runTest {
+        val cache = InMemoryPlaybackCache()
+        val s = setup(cache = cache)
+        cache.upsert(PlaybackCacheEntry(ep1.id, ep1.audioUrl, 100, 100, 1))
+        runCurrent()
+        assertEquals(DownloadControl.Cached, s.state.controlOf(ep1))
+        s.state.onControlClick(ep1, DownloadControl.Cached)
+        settle()
+        assertEquals(DownloadControl.Downloaded, s.state.controlOf(ep1))
+    }
+
+    @Test
     fun fullyCachedEpisodeCanBeRemovedByHandWhileOffline() = runTest {
         val cache = InMemoryPlaybackCache()
         val s = setup(cache = cache, offline = MutableStateFlow(true))
