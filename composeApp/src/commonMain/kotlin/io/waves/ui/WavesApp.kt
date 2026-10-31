@@ -57,6 +57,7 @@ import io.waves.model.EpisodeId
 import io.waves.model.HistoryEntry
 import io.waves.model.Podcast
 import io.waves.offline.offlinePlayableIds
+import io.waves.sync.ShowSettingsRecord
 import io.waves.youtube.YoutubeChannels
 import io.waves.youtube.YoutubeUrls
 import kotlinx.coroutines.CancellationException
@@ -64,6 +65,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -120,6 +122,8 @@ class AppState(deps: AppDependencies, scope: kotlinx.coroutines.CoroutineScope) 
         playbackCache = deps.playbackCache?.entries ?: flowOf(emptyList()),
         cachedEpisodeIds = deps.downloads?.cachedEpisodeIds ?: flowOf(emptySet()),
         onEpisodesAbsent = deps.onEpisodesAbsent,
+        hiddenFeeds = deps.library.showSettings.map { m -> m.values.filterNot { it.inHome }.mapTo(HashSet()) { it.feedUrl } }
+            .distinctUntilChanged(),
     )
     val history = HistoryState(deps.library, scope)
     val recentFetches = RecentFetches(deps.feedFetches)
@@ -395,6 +399,19 @@ private fun CurrentScreen(
                     )
                 }
                 val pageTitle = detail.state.collectAsState().value.podcast.title
+                val showSettings by remember { deps.library.showSettings }.collectAsState(emptyMap())
+                // A show already followed when its page opens needs less introduction: one line of description.
+                val openedFollowed = remember(screen) {
+                    app.home.state.value.subscriptions.any { it.feedUrl == screen.podcast.feedUrl }
+                }
+                val feedUrl = detail.state.collectAsState().value.podcast.feedUrl
+                val choices = showSettings[feedUrl] ?: ShowSettingsRecord(feedUrl, updatedAtEpochMs = 0)
+                fun change(transform: (ShowSettingsRecord) -> ShowSettingsRecord) {
+                    scope.launch {
+                        deps.library.setShowSettings(transform(choices).copy(updatedAtEpochMs = io.waves.currentTimeMillis()))
+                        deps.onLocalChange()
+                    }
+                }
                 PodcastScreen(
                     state = detail,
                     playback = playback,
@@ -403,6 +420,11 @@ private fun CurrentScreen(
                     onPause = app.playback::pause,
                     downloads = app.downloads,
                     onSetCompleted = app.playback::setCompleted,
+                    notifying = choices.notify,
+                    onToggleNotifying = { change { it.copy(notify = !it.notify) } },
+                    inHome = choices.inHome,
+                    onToggleInHome = { change { it.copy(inHome = !it.inHome) } },
+                    descriptionLines = if (openedFollowed) 1 else 3,
                     // Discover searches for the creator; for a YouTube show it lists the creator's own shows instead.
                     onAuthorClick = { author ->
                         nav.select(Tab.Discover)
