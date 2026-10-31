@@ -21,6 +21,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.getAndUpdate
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.SharingStarted
@@ -65,8 +67,14 @@ class PlaybackController(
     /** Paused stand-in for the last unfinished episode; only shown while the player itself is empty. */
     private val restored = MutableStateFlow<PlaybackState?>(null)
 
-    /** The player's state, or the restored episode while nothing has been loaded into the player. */
-    val state: StateFlow<PlaybackState> = MergedState(player.state, restored)
+    /** The episode just asked for, playing, until it's handed to the player (its saved position is looked up first). */
+    private val starting = MutableStateFlow<PlaybackState?>(null)
+
+    /**
+     * The player's state, or the episode about to be handed to it, or the restored episode while nothing has been
+     * loaded into the player.
+     */
+    val state: StateFlow<PlaybackState> = MergedState(player.state, restored, starting)
 
     private val _podcast = MutableStateFlow<Podcast?>(null)
     /** Podcast of the current episode (for artwork / titles). */
@@ -133,19 +141,37 @@ class PlaybackController(
     fun play(episode: Episode, podcast: Podcast) {
         restored.value = null
         markedComplete = null
+        if (player.state.value.episode?.id != episode.id) {
+            starting.value = PlaybackState(
+                episode = episode,
+                isPlaying = true,
+                durationMs = (episode.durationSeconds ?: 0L) * 1000,
+                speed = player.state.value.speed,
+                isBuffering = true,
+            )
+        }
         scope.launch {
-            val current = player.state.value
-            if (current.episode != null && current.episode.id != episode.id) save(current)
-            if (current.episode?.id == episode.id && !current.isEnded && current.error == null) {
-                if (!current.isPlaying) player.resume()
+            try {
+                val current = player.state.value
+                if (current.episode != null && current.episode.id != episode.id) save(current)
+                if (current.episode?.id == episode.id && !current.isEnded && current.error == null) {
+                    if (!current.isPlaying) player.resume()
+                    _podcast.value = podcast
+                    save(current) // no longer marked complete, if it was
+                    return@launch
+                }
+                val saved = library.progress(episode.id).first()
+                val start = if (saved != null && !saved.completed) saved.positionMs else 0L
+                // Played again from the start: no longer played, so its row shows the time left at once.
+                if (saved?.completed == true) setCompleted(episode, false)
                 _podcast.value = podcast
-                return@launch
+                source = episode
+                player.play(episode, start, podcast.title)
+            } finally {
+                // The player shows it now (or never will); a later tap may have asked for another one meanwhile.
+                val pending = starting.getAndUpdate { if (it?.episode?.id == episode.id) null else it }
+                if (pending?.episode?.id == episode.id && !pending.isPlaying) player.pause() // paused while starting
             }
-            val saved = library.progress(episode.id).first()
-            val start = if (saved != null && !saved.completed) saved.positionMs else 0L
-            _podcast.value = podcast
-            source = episode
-            player.play(episode, start, podcast.title)
             library.addHistory(
                 HistoryEntry(
                     episodeId = episode.id,
@@ -161,6 +187,7 @@ class PlaybackController(
 
     fun togglePlayPause() {
         if (playRestored()) return
+        starting.value?.let { if (it.isPlaying) pause() else resume(); return }
         val s = player.state.value
         when {
             s.episode == null -> Unit
@@ -175,6 +202,7 @@ class PlaybackController(
     }
 
     fun pause() {
+        starting.update { it?.copy(isPlaying = false, isBuffering = false) }
         player.pause()
         val s = player.state.value
         scope.launch { save(s.copy(isPlaying = false)) }
@@ -182,6 +210,10 @@ class PlaybackController(
 
     fun resume() {
         markedComplete = null
+        if (starting.value != null) {
+            starting.update { it?.copy(isPlaying = true, isBuffering = true) }
+            return
+        }
         player.resume()
     }
 
@@ -356,13 +388,15 @@ class PlaybackController(
 private class MergedState(
     private val player: StateFlow<PlaybackState>,
     private val restored: StateFlow<PlaybackState?>,
+    private val starting: StateFlow<PlaybackState?>,
 ) : StateFlow<PlaybackState> {
-    private fun merge(p: PlaybackState, r: PlaybackState?) = if (p.episode == null && r != null) r else p
+    private fun merge(p: PlaybackState, r: PlaybackState?, s: PlaybackState?) =
+        s ?: if (p.episode == null && r != null) r else p
 
-    override val value: PlaybackState get() = merge(player.value, restored.value)
+    override val value: PlaybackState get() = merge(player.value, restored.value, starting.value)
     override val replayCache: List<PlaybackState> get() = listOf(value)
     override suspend fun collect(collector: FlowCollector<PlaybackState>): Nothing {
-        combine(player, restored, ::merge).distinctUntilChanged().collect(collector)
+        combine(player, restored, starting, ::merge).distinctUntilChanged().collect(collector)
         awaitCancellation()
     }
 }
