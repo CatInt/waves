@@ -29,6 +29,7 @@ object SyncMerge {
         history = mergeHistory(a.history + b.history),
         archive = mergeArchive(a.archive + b.archive),
         showSettings = mergeShowSettings(a.showSettings + b.showSettings),
+        listening = mergeListening(a.listening + b.listening),
     )
 
     /** Canonical form of a single state (dedups and sorts); merge(s, s) == normalize(s). */
@@ -48,6 +49,15 @@ object SyncMerge {
     /** Latest change per show wins; ties fall to the field values so the choice never depends on argument order. */
     private val showSettingsOrder: Comparator<ShowSettingsRecord> =
         compareBy<ShowSettingsRecord> { it.updatedAtEpochMs }.thenBy { it.notify }.thenBy { it.inHome }
+
+    /** Listening days kept, newest first: a year and more of every device, a few kilobytes. */
+    const val LISTENING_CAP = 1000
+
+    /** Each device's total for a day only grows, so the larger is the later. */
+    fun mergeListening(all: List<ListeningRecord>): List<ListeningRecord> =
+        all.groupBy { it.deviceId to it.day }.map { (_, records) -> records.maxBy { it.listenedMs } }
+            .sortedWith(compareByDescending<ListeningRecord> { it.day }.thenBy { it.deviceId })
+            .take(LISTENING_CAP)
 
     private fun mergeShowSettings(all: List<ShowSettingsRecord>): List<ShowSettingsRecord> =
         all.groupBy { it.feedUrl }.map { (_, records) -> records.maxWith(showSettingsOrder) }.sortedBy { it.feedUrl }

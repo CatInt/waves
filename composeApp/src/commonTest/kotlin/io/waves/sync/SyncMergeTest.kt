@@ -95,6 +95,18 @@ class SyncMergeTest {
             publishedAtEpochMs = at, durationSeconds = seconds)
 
     @Test
+    fun listeningKeepsTheLargerTotalPerDeviceAndDay() {
+        val a = SyncState(listening = listOf(ListeningRecord("phone", "2026-10-30", 60_000), ListeningRecord("mac", "2026-10-30", 5_000)))
+        val b = SyncState(listening = listOf(ListeningRecord("phone", "2026-10-30", 90_000), ListeningRecord("phone", "2026-10-31", 1_000)))
+        val m = SyncMerge.merge(a, b)
+        assertEquals(m, SyncMerge.merge(b, a))
+        assertEquals(
+            listOf(ListeningRecord("phone", "2026-10-31", 1_000), ListeningRecord("mac", "2026-10-30", 5_000), ListeningRecord("phone", "2026-10-30", 90_000)),
+            m.listening,
+        )
+    }
+
+    @Test
     fun showSettingsKeepTheLatestChangePerShowWhicheverWayRound() {
         val a = SyncState(showSettings = listOf(ShowSettingsRecord("x", notify = false, updatedAtEpochMs = 5), ShowSettingsRecord("y", inHome = false, updatedAtEpochMs = 1)))
         val b = SyncState(showSettings = listOf(ShowSettingsRecord("x", notify = true, updatedAtEpochMs = 3), ShowSettingsRecord("y", inHome = true, updatedAtEpochMs = 2)))

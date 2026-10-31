@@ -10,7 +10,7 @@ import kotlinx.serialization.Serializable
  * Everything that syncs between devices, stored as one JSON file in the user's Google Drive appDataFolder.
  * Merge rules: subscriptions LWW per feedUrl (tombstones via subscribed=false), progress LWW per episode,
  * history = union deduplicated by (episodeId, playedAt, deviceId), archive = union by episode, show settings LWW per
- * feedUrl.
+ * feedUrl, listening = the larger total per (device, day).
  */
 @Serializable
 data class SyncState(
@@ -25,6 +25,16 @@ data class SyncState(
     val archive: List<Episode> = emptyList(),
     /** Per-show choices (notifications, Home). A new top-level key, so files without it still read. */
     val showSettings: List<ShowSettingsRecord> = emptyList(),
+    /** Time spent listening, per device and day. A new top-level key, so files without it still read. */
+    val listening: List<ListeningRecord> = emptyList(),
+)
+
+/** How long [deviceId] played audio on [day] (its local date, ISO `yyyy-MM-dd`); only ever grows. */
+@Serializable
+data class ListeningRecord(
+    val deviceId: String,
+    val day: String,
+    val listenedMs: Long,
 )
 
 /** One show's choices; a show without a record notifies and is listed on Home. */

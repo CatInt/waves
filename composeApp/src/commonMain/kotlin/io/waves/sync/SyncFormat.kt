@@ -22,7 +22,7 @@ object SyncFormat {
     /** Highest format version this build reads and writes. */
     const val SUPPORTED_VERSION = 1
 
-    private val KNOWN_KEYS = setOf("version", "subscriptions", "progress", "history", "archive", "showSettings")
+    private val KNOWN_KEYS = setOf("version", "subscriptions", "progress", "history", "archive", "showSettings", "listening")
 
     internal val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 

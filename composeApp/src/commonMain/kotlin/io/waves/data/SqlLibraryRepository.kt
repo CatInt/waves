@@ -11,6 +11,7 @@ import io.waves.model.EpisodeId
 import io.waves.model.HistoryEntry
 import io.waves.model.PlaybackProgress
 import io.waves.model.Podcast
+import io.waves.sync.ListeningRecord
 import io.waves.sync.ShowSettingsRecord
 import io.waves.sync.SubscriptionRecord
 import io.waves.sync.SyncMerge
@@ -95,6 +96,24 @@ class SqlLibraryRepository(
         settings.put(SHOW_SETTINGS_KEY, showSettingsJson.encodeToString(showSettingsSerializer, stored.values.sortedBy { it.feedUrl }))
     }
 
+    override val listening: Flow<List<ListeningRecord>> =
+        settings.get(LISTENING_KEY).asFlow().mapToOneOrNull(ioContext).map { decodeListening(it) }
+
+    override suspend fun addListening(deviceId: String, day: String, ms: Long) {
+        if (ms <= 0) return
+        write {
+            settings.transaction {
+                val stored = decodeListening(settings.get(LISTENING_KEY).executeAsOneOrNull())
+                val before = stored.firstOrNull { it.deviceId == deviceId && it.day == day }?.listenedMs ?: 0L
+                putListening(stored + ListeningRecord(deviceId, day, before + ms))
+            }
+        }
+    }
+
+    private fun putListening(records: List<ListeningRecord>) {
+        settings.put(LISTENING_KEY, showSettingsJson.encodeToString(listeningSerializer, SyncMerge.mergeListening(records)))
+    }
+
     override suspend fun subscribe(podcast: Podcast) = write {
         podcasts.upsertPodcast(podcast, subscribed = true, updatedAt = clock())
     }
@@ -177,6 +196,7 @@ class SqlLibraryRepository(
                     .filter { archivedFeed(it.feedUrl) }
                     .flatMap { p -> episodesQ.byFeed(p.feedUrl).executeAsList().map { it.toModel() } },
                 showSettings = decodeShowSettings(settings.get(SHOW_SETTINGS_KEY).executeAsOneOrNull()),
+                listening = decodeListening(settings.get(LISTENING_KEY).executeAsOneOrNull()),
             )
         }
     }
@@ -212,6 +232,9 @@ class SqlLibraryRepository(
             }
             state.history.forEach { historyQ.insertHistory(it) }
             putShowSettings(state.showSettings, force = false)
+            if (state.listening.isNotEmpty()) {
+                putListening(decodeListening(settings.get(LISTENING_KEY).executeAsOneOrNull()) + state.listening)
+            }
             for (e in state.archive) {
                 if (!archivedFeed(e.podcastFeedUrl)) continue
                 episodesQ.insertIfAbsent(
@@ -252,9 +275,15 @@ class SqlLibraryRepository(
     companion object {
         const val DEVICE_ID_KEY = "deviceId"
         const val SHOW_SETTINGS_KEY = "showSettings"
+        const val LISTENING_KEY = "listening"
 
         private val showSettingsJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
         private val showSettingsSerializer = kotlinx.serialization.builtins.ListSerializer(ShowSettingsRecord.serializer())
+
+        private val listeningSerializer = kotlinx.serialization.builtins.ListSerializer(ListeningRecord.serializer())
+
+        private fun decodeListening(value: String?): List<ListeningRecord> =
+            value?.let { runCatching { showSettingsJson.decodeFromString(listeningSerializer, it) }.getOrNull() }.orEmpty()
 
         private fun decodeShowSettings(value: String?): List<ShowSettingsRecord> =
             value?.let { runCatching { showSettingsJson.decodeFromString(showSettingsSerializer, it) }.getOrNull() }.orEmpty()
