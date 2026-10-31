@@ -83,7 +83,7 @@ fun HistoryScreen(
                 }
             }
             // Pinned like Home's shelf, its divider on the same line.
-            Column(Modifier.height(PinnedHeaderHeight)) {
+            Column(Modifier.height(ShelfBandHeight)) {
                 HistorySummary(ui.listenedThisWeekMs, downloads, Modifier.weight(1f))
                 SectionLabel(
                     topDay?.let { dayLabel(it, today) }.orEmpty(),
