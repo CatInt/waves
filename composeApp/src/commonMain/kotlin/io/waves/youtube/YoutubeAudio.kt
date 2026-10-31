@@ -1,6 +1,8 @@
 package io.waves.youtube
 
+import io.waves.net.ResponseCache
 import io.ktor.client.HttpClient
+import kotlin.time.Duration.Companion.hours
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -51,8 +53,16 @@ fun interface YoutubeAudioSource {
 }
 
 object YoutubeAudio {
+    /**
+     * The video's audio stream address, kept for an hour ([ResponseCache]; YouTube's expire after about six), and never
+     * an expired one in place of a failure.
+     */
     suspend fun streamUrl(client: HttpClient, videoId: String): String {
         if (!YoutubeUrls.isVideoId(videoId)) throw YoutubeException("That isn't a YouTube video")
+        return ResponseCache.text("youtube stream $videoId", 1.hours, staleOnError = false) { findStream(client, videoId) }
+    }
+
+    private suspend fun findStream(client: HttpClient, videoId: String): String {
         var failure: AudioChoice.Unavailable? = null
         for (spec in clients) {
             val text = try {

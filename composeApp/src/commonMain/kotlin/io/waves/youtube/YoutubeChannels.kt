@@ -7,6 +7,7 @@ import io.ktor.client.request.parameter
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpHeaders
 import io.ktor.http.isSuccess
+import io.waves.net.ResponseCache
 import io.waves.feed.FeedDates
 import io.waves.feed.FeedFetchException
 import io.waves.model.Podcast
@@ -15,6 +16,9 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.minutes
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -144,13 +148,22 @@ class YoutubeChannels(private val client: HttpClient) {
     }
 
     private suspend fun authorUrl(videoId: String): String? {
-        val response = client.get("https://www.youtube.com/oembed") {
-            parameter("url", YoutubeUrls.watchUrl(videoId))
-            parameter("format", "json")
-            header(HttpHeaders.UserAgent, WEB_USER_AGENT)
+        val text = try {
+            ResponseCache.text("youtube oembed $videoId", ChannelOfVideoTtl) {
+                val response = client.get("https://www.youtube.com/oembed") {
+                    parameter("url", YoutubeUrls.watchUrl(videoId))
+                    parameter("format", "json")
+                    header(HttpHeaders.UserAgent, WEB_USER_AGENT)
+                }
+                if (!response.status.isSuccess()) throw YoutubeException("YouTube returned HTTP ${response.status.value}")
+                response.bodyAsText()
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            return null
         }
-        if (!response.status.isSuccess()) return null
-        return jsonObject(response.bodyAsText())?.string("author_url")
+        return jsonObject(text)?.string("author_url")
     }
 
     private suspend fun browseId(url: String): String {
@@ -158,11 +171,13 @@ class YoutubeChannels(private val client: HttpClient) {
             putJsonObject("context") { put("client", webClient()) }
             put("url", url)
         }.toString()
-        val text = client.postJson(
-            "https://www.youtube.com/youtubei/v1/navigation/resolve_url?prettyPrint=false",
-            body,
-            WEB_USER_AGENT,
-        )
+        val text = ResponseCache.text("youtube resolve $url", ChannelOfLinkTtl) {
+            client.postJson(
+                "https://www.youtube.com/youtubei/v1/navigation/resolve_url?prettyPrint=false",
+                body,
+                WEB_USER_AGENT,
+            )
+        }
         val id = jsonObject(text)
             ?.obj("endpoint")?.obj("browseEndpoint")?.string("browseId")
             ?.takeIf { YoutubeUrls.isChannelId(it) }
@@ -186,11 +201,13 @@ class YoutubeChannels(private val client: HttpClient) {
             put("browseId", channelId)
         }.toString()
         val text = try {
-            client.postJson(
-                "https://www.youtube.com/youtubei/v1/browse?prettyPrint=false",
-                body,
-                WEB_USER_AGENT,
-            )
+            ResponseCache.text("youtube channel $channelId", ChannelTtl) {
+                client.postJson(
+                    "https://www.youtube.com/youtubei/v1/browse?prettyPrint=false",
+                    body,
+                    WEB_USER_AGENT,
+                )
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -225,8 +242,12 @@ class YoutubeChannels(private val client: HttpClient) {
             put("browseId", channelId)
             put("params", params)
         }.toString()
+        // New uploads show on the Videos tab, so it's kept briefly; the playlists change far less.
+        val ttl = if (params == VIDEOS_TAB_PARAMS) VideosTabTtl else ChannelTtl
         val text = try {
-            client.postJson("https://www.youtube.com/youtubei/v1/browse?prettyPrint=false", body, WEB_USER_AGENT)
+            ResponseCache.text("youtube tab $channelId $params", ttl) {
+                client.postJson("https://www.youtube.com/youtubei/v1/browse?prettyPrint=false", body, WEB_USER_AGENT)
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -248,7 +269,9 @@ class YoutubeChannels(private val client: HttpClient) {
             put("videoId", videoId)
         }.toString()
         val text = try {
-            client.postJson("https://www.youtube.com/youtubei/v1/player?prettyPrint=false", body, WEB_USER_AGENT)
+            ResponseCache.text("youtube video $videoId", VideoTtl) {
+                client.postJson("https://www.youtube.com/youtubei/v1/player?prettyPrint=false", body, WEB_USER_AGENT)
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -359,3 +382,11 @@ internal const val WEB_USER_AGENT =
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
 
 internal const val WEB_CLIENT_VERSION = "2.20260708.00.00"
+
+/** How long YouTube's answers are kept ([ResponseCache]): a link's channel never changes; a channel's page seldom. */
+private val ChannelOfLinkTtl = 30.days
+private val ChannelOfVideoTtl = 30.days
+private val ChannelTtl = 1.days
+private val VideosTabTtl = 30.minutes
+/** A video's details: a premiere or stream still live has no length yet, so not too long. */
+private val VideoTtl = 6.hours

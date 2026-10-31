@@ -1,5 +1,6 @@
 package io.waves.update
 
+import io.waves.net.ResponseCache
 import io.ktor.client.HttpClient
 import io.ktor.client.request.get
 import io.ktor.client.request.head
@@ -11,6 +12,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentLength
 import io.ktor.http.isSuccess
 import io.ktor.utils.io.readAvailable
+import kotlin.time.Duration.Companion.minutes
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -44,17 +46,32 @@ data class AppRelease(val version: Version, val notes: String, val pageUrl: Stri
 class GitHubReleases(private val http: HttpClient, private val repo: String = RELEASES_REPO) {
     /** Null when the repository has no usable release yet. */
     suspend fun latest(): AppRelease? {
+        // Kept half an hour ([ResponseCache]): checking again right away needn't ask GitHub, which caps anonymous calls.
+        val body = try {
+            ResponseCache.text("github latest $repo", 30.minutes) { latestBody() }
+        } catch (e: NoRelease) {
+            return null
+        } catch (e: RateLimited) {
+            return latestFromWebsite()
+        }
+        return parseRelease(body)
+    }
+
+    private class NoRelease : Exception()
+    private class RateLimited : Exception()
+
+    private suspend fun latestBody(): String {
         val response = http.get("https://api.github.com/repos/$repo/releases/latest") {
             header("Accept", "application/vnd.github+json")
             header("X-GitHub-Api-Version", "2022-11-28")
         }
-        if (response.status == HttpStatusCode.NotFound) return null
+        if (response.status == HttpStatusCode.NotFound) throw NoRelease()
         // Anonymous API calls are capped at 60 an hour per IP address, which a shared network can use up.
         if (response.status == HttpStatusCode.Forbidden || response.status == HttpStatusCode.TooManyRequests) {
-            return latestFromWebsite()
+            throw RateLimited()
         }
         if (!response.status.isSuccess()) error("GitHub returned HTTP ${response.status.value}")
-        return parseRelease(response.bodyAsText())
+        return response.bodyAsText()
     }
 
     /** The release pages on github.com aren't rate limited; they give the tag and file links but no notes or sizes. */
