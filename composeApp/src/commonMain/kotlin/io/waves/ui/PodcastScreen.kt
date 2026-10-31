@@ -29,10 +29,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.outlined.NotificationsOff
+import androidx.compose.material.icons.outlined.Home as OutlinedHome
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -64,7 +64,12 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -73,6 +78,8 @@ import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
@@ -98,6 +105,14 @@ fun PodcastScreen(
     downloads: DownloadsState? = null,
     /** Marks an episode complete or not; null hides the per-episode button. */
     onSetCompleted: ((Episode, Boolean) -> Unit)? = null,
+    /** Whether new episodes of this show raise a notification, and the bell that flips it; null hides the bell. */
+    notifying: Boolean = true,
+    onToggleNotifying: (() -> Unit)? = null,
+    /** Whether this show's episodes are listed on Home, and the button that flips it; null hides the button. */
+    inHome: Boolean = true,
+    onToggleInHome: (() -> Unit)? = null,
+    /** Lines of description shown until it's tapped open. */
+    descriptionLines: Int = 3,
     /** Null leaves the creator name as plain text. */
     onAuthorClick: ((String) -> Unit)? = null,
     authorClickLabel: (String) -> String = { "Search podcasts by $it" },
@@ -202,8 +217,6 @@ fun PodcastScreen(
                 contentPadding = listContentPadding(top = 0.dp),
             ) {
                 item {
-                    val latest = ui.episodes.firstOrNull()
-                    val latestPlaying = latest != null && playback.episode?.id == latest.episode.id && playback.isPlaying
                     Hero(
                         modifier = Modifier.onSizeChanged { heroHeight = it.height },
                         backdrop = entry,
@@ -219,9 +232,12 @@ fun PodcastScreen(
                         fadeLine = fadeLine,
                         ui = ui,
                         colors = hero,
-                        latestPlaying = latestPlaying,
-                        onPlayLatest = latest?.let { row -> { if (latestPlaying) onPause() else onPlay(row.episode, ui.podcast) } },
                         onToggleSubscribe = state::toggleSubscribe,
+                        notifying = notifying,
+                        onToggleNotifying = onToggleNotifying,
+                        inHome = inHome,
+                        onToggleInHome = onToggleInHome,
+                        descriptionLines = descriptionLines,
                         onAuthorClick = onAuthorClick,
                         authorClickLabel = authorClickLabel,
                         creator = ui.podcast.author?.takeIf { it.isNotBlank() } ?: creatorName,
@@ -325,7 +341,7 @@ private fun Modifier.fadeUnder(line: () -> Float, leadDistance: Dp = FadeLead): 
 
 /**
  * Top of the page on a gradient from the cover's colour: the cover large and centred, the title and creator under it,
- * "Latest episode" and subscribe buttons, then the description.
+ * the "Subscribe" button with the notification and Home toggles, then the description.
  */
 @Composable
 private fun Hero(
@@ -339,9 +355,12 @@ private fun Hero(
     fadeLine: () -> Float,
     ui: PodcastDetailUiState,
     colors: PlayerColors,
-    latestPlaying: Boolean,
-    onPlayLatest: (() -> Unit)?,
     onToggleSubscribe: () -> Unit,
+    notifying: Boolean,
+    onToggleNotifying: (() -> Unit)?,
+    inHome: Boolean,
+    onToggleInHome: (() -> Unit)?,
+    descriptionLines: Int,
     onAuthorClick: ((String) -> Unit)?,
     authorClickLabel: (String) -> String,
     creator: String?,
@@ -364,7 +383,7 @@ private fun Hero(
             size = HeroCoverSize, corner = HeroCoverCorner, onLoaded = onCoverLoaded,
             liveArchive = ui.podcast.isLiveArchive, playlist = ui.podcast.playlistId,
         )
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(10.dp))
         Column(contentModifier, horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
                 ui.podcast.title, style = MaterialTheme.typography.titleLarge, color = ink,
@@ -373,7 +392,7 @@ private fun Hero(
             )
             creator?.let { author ->
                 Row(
-                    Modifier.padding(top = 2.dp).fadeUnder(fadeLine).clip(CircleShape)
+                    Modifier.fadeUnder(fadeLine).clip(CircleShape)
                         .then(
                             if (onAuthorClick != null) {
                                 Modifier.clickable(onClickLabel = authorClickLabel(author)) { onAuthorClick(author) }
@@ -381,7 +400,7 @@ private fun Hero(
                                 Modifier
                             },
                         )
-                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                        .padding(horizontal = 8.dp, vertical = 1.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
@@ -393,39 +412,47 @@ private fun Hero(
                     }
                 }
             }
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(8.dp))
             Row(
                 Modifier.fadeUnder(fadeLine),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Surface(
-                    onClick = { onPlayLatest?.invoke() },
-                    enabled = onPlayLatest != null,
+                    onClick = onToggleSubscribe,
+                    enabled = ui.podcast.feedUrl.isNotBlank(),
                     shape = CircleShape,
                     color = ink.copy(alpha = 0.1f),
                     contentColor = ink,
-                    modifier = Modifier.height(44.dp).widthIn(min = 200.dp),
+                    modifier = Modifier.height(38.dp).widthIn(min = 170.dp)
+                        .semantics { contentDescription = if (ui.subscribed) "Unsubscribe" else "Subscribe" },
                 ) {
                     Row(
                         Modifier.padding(horizontal = 20.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center,
                     ) {
-                        Icon(if (latestPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null, Modifier.size(22.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Latest episode", style = MaterialTheme.typography.labelLarge)
+                        Text(if (ui.subscribed) "Subscribed" else "Subscribe", style = MaterialTheme.typography.labelLarge)
                     }
                 }
-                HeroButton(onClick = onToggleSubscribe, colors = colors, enabled = ui.podcast.feedUrl.isNotBlank()) {
-                    Icon(
-                        if (ui.subscribed) Icons.Default.Check else Icons.Default.Add,
-                        if (ui.subscribed) "Unsubscribe" else "Subscribe",
-                        Modifier.size(22.dp),
+                // Both only mean something for a followed show: only those are refreshed and listed on Home.
+                if (onToggleNotifying != null) {
+                    HeroToggle(
+                        on = notifying, onClick = onToggleNotifying, colors = colors, enabled = ui.subscribed,
+                        icon = if (notifying) Icons.Filled.Notifications else Icons.Outlined.NotificationsOff,
+                        description = if (notifying) "Turn off notifications" else "Turn on notifications",
+                    )
+                }
+                if (onToggleInHome != null) {
+                    HeroToggle(
+                        on = inHome, onClick = onToggleInHome, colors = colors, enabled = ui.subscribed,
+                        icon = if (inHome) Icons.Filled.Home else Icons.Outlined.OutlinedHome,
+                        description = if (inHome) "Hide from Home" else "Show in Home",
+                        slashed = !inHome, // there's no "home off" icon: struck through like the bell's
                     )
                 }
             }
-            Description(ui, ink, Modifier.fadeUnder(fadeLine, leadDistance = DescriptionFadeLead))
+            Description(ui, ink, descriptionLines, Modifier.fadeUnder(fadeLine, leadDistance = DescriptionFadeLead))
         }
     }
 }
@@ -615,29 +642,52 @@ private fun DrawScope.drawFrame(cornerPx: Float, strength: Float) {
     )
 }
 
-/** Round translucent button on the hero backdrop. */
+/**
+ * A round button on the hero that's on or off: off shows a fainter outlined icon on a fainter fill. Dimmed while not
+ * [enabled].
+ */
 @Composable
-private fun HeroButton(
+private fun HeroToggle(
+    on: Boolean,
     onClick: () -> Unit,
     colors: PlayerColors,
-    modifier: Modifier = Modifier,
-    enabled: Boolean = true,
-    content: @Composable () -> Unit,
+    enabled: Boolean,
+    icon: ImageVector,
+    description: String,
+    /** Strikes [icon] through, with a sliver cut away either side, the way Material's "off" icons are. */
+    slashed: Boolean = false,
 ) {
     Surface(
         onClick = onClick,
         enabled = enabled,
         shape = CircleShape,
-        color = colors.onContainer.copy(alpha = 0.1f),
-        contentColor = colors.onContainer,
-        modifier = modifier.size(44.dp),
+        color = colors.onContainer.copy(alpha = if (on) 0.1f else 0.05f),
+        contentColor = colors.onContainer.copy(alpha = if (on) 1f else 0.6f),
+        modifier = Modifier.size(38.dp).graphicsLayer { alpha = if (enabled) 1f else 0.4f },
     ) {
-        Box(contentAlignment = Alignment.Center) { content() }
+        Box(contentAlignment = Alignment.Center) {
+            val ink = LocalContentColor.current
+            Icon(
+                icon, description,
+                Modifier.size(20.dp).then(
+                    if (!slashed) Modifier
+                    else Modifier.graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }.drawWithContent {
+                        drawContent()
+                        // In the icon's 24-unit grid, as Material draws its slashes.
+                        val unit = size.width / 24f
+                        val from = Offset(3f * unit, 3f * unit)
+                        val to = Offset(21f * unit, 21f * unit)
+                        drawLine(Color.Black, from, to, strokeWidth = 4.5f * unit, cap = StrokeCap.Round, blendMode = BlendMode.Clear)
+                        drawLine(ink, from, to, strokeWidth = 2f * unit, cap = StrokeCap.Round)
+                    },
+                ),
+            )
+        }
     }
 }
 
 @Composable
-private fun Description(ui: PodcastDetailUiState, ink: Color, fade: Modifier) {
+private fun Description(ui: PodcastDetailUiState, ink: Color, collapsedLines: Int, fade: Modifier) {
     var expanded by remember { mutableStateOf(false) }
     // Directory search results carry no description; it arrives with the feed.
     val description = ui.podcast.description?.let(::plainText)
@@ -647,7 +697,7 @@ private fun Description(ui: PodcastDetailUiState, ink: Color, fade: Modifier) {
             description,
             style = MaterialTheme.typography.bodyMedium,
             color = ink.copy(alpha = 0.75f),
-            maxLines = if (expanded) Int.MAX_VALUE else 3,
+            maxLines = if (expanded) Int.MAX_VALUE else collapsedLines,
             overflow = TextOverflow.Ellipsis,
             modifier = modifier.fillMaxWidth().widthIn(max = 720.dp)
                 .animateContentSize(tween(durationMillis = 250, easing = FastOutSlowInEasing))
