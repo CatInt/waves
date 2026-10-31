@@ -169,3 +169,6 @@ queries alone, for example to `Setting.sq`, needs no migration.
   episodes a device lacks (or a length it lacks); it never overwrites one it already has.
 - `showSettings` (a top-level key added within version 1) carries each show's notification and Home choices, last
   change wins per feed URL. A show without a record notifies and is listed on Home.
+- `listening` (a top-level key added within version 1) carries each device's listening time per local day, merged by
+  keeping the larger total; History's header sums this week's across devices. Capped at the newest 1000 records
+  (`SyncMerge.LISTENING_CAP`).

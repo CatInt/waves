@@ -34,6 +34,18 @@ class InMemoryLibraryRepository(
         shows.update { it + (record.feedUrl to record) }
     }
 
+    private val listened = MutableStateFlow<List<io.waves.sync.ListeningRecord>>(emptyList())
+
+    override val listening: Flow<List<io.waves.sync.ListeningRecord>> = listened
+
+    override suspend fun addListening(deviceId: String, day: String, ms: Long) {
+        if (ms <= 0) return
+        listened.update { all ->
+            val before = all.firstOrNull { it.deviceId == deviceId && it.day == day }?.listenedMs ?: 0L
+            SyncMerge.mergeListening(all + io.waves.sync.ListeningRecord(deviceId, day, before + ms))
+        }
+    }
+
     override val subscriptions: Flow<List<Podcast>> =
         subs.map { m -> m.values.filter { it.subscribed }.map { it.podcast } }.distinctUntilChanged()
 
@@ -109,6 +121,7 @@ class InMemoryLibraryRepository(
         progress = progressById.value.values.toList(),
         history = historyList.value,
         showSettings = shows.value.values.toList(),
+        listening = listened.value,
     )
 
     override suspend fun importSyncState(state: SyncState) {
@@ -122,5 +135,6 @@ class InMemoryLibraryRepository(
         progressById.value = merged.progress.associateBy { it.episodeId }
         historyList.value = merged.history
         shows.value = merged.showSettings.associateBy { it.feedUrl }
+        listened.value = merged.listening
     }
 }

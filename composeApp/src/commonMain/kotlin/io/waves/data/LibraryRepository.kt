@@ -44,6 +44,12 @@ interface LibraryRepository {
 
     /** Stores one show's choices (stamp [io.waves.sync.ShowSettingsRecord.updatedAtEpochMs] with the time of the change). */
     suspend fun setShowSettings(record: io.waves.sync.ShowSettingsRecord) {}
+
+    /** Listening time per device and day, every device's (synced). */
+    val listening: Flow<List<io.waves.sync.ListeningRecord>> get() = kotlinx.coroutines.flow.flowOf(emptyList())
+
+    /** Adds [ms] to [deviceId]'s listening on [day] (ISO local date). */
+    suspend fun addListening(deviceId: String, day: String, ms: Long) {}
     suspend fun saveProgress(progress: PlaybackProgress)
     suspend fun addHistory(entry: HistoryEntry)
 
