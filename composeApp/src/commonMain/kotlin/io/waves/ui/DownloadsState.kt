@@ -32,9 +32,9 @@ sealed interface DownloadControl {
     data object NotDownloaded : DownloadControl
     /** Queued or downloading: circular progress ([progress] null = indeterminate); tap cancels. */
     data class InProgress(val progress: Float?) : DownloadControl
-    /** Downloaded: check icon; menu / long-press offers "Remove download". */
+    /** Downloaded: tap turns it into a delete button for a moment; long-press offers "Remove download". */
     data object Downloaded : DownloadControl
-    /** Fully cached by the player, not an explicit download. Menu offers "Remove cached episode". */
+    /** Fully cached by the player, not an explicit download. Tap downloads it; long-press offers "Remove cached episode". */
     data object Cached : DownloadControl
     /** Failed: error icon; tap retries. */
     data class Failed(val error: String?) : DownloadControl
@@ -173,9 +173,9 @@ class DownloadsState(
     /** The tap action of the per-episode control for its current [control] state. */
     fun onControlClick(episode: Episode, control: DownloadControl) {
         when (control) {
-            DownloadControl.NotDownloaded, is DownloadControl.Failed -> download(episode)
+            DownloadControl.NotDownloaded, DownloadControl.Cached, is DownloadControl.Failed -> download(episode)
             is DownloadControl.InProgress -> cancel(episode.id)
-            DownloadControl.Downloaded, DownloadControl.Cached -> Unit // removal goes through the menu
+            DownloadControl.Downloaded -> Unit // removal goes through the menu
         }
     }
 
