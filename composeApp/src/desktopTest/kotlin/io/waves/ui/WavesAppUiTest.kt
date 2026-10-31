@@ -57,7 +57,10 @@ class WavesAppUiTest {
         (hasText(label) or hasContentDescription(label)) and SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Tab)
 
     private fun ComposeUiTest.waitForText(text: String) =
-        waitFor("text \"$text\"") { onAllNodesWithText(text, substring = true).fetchSemanticsNodes().isNotEmpty() }
+        waitFor("text \"$text\"") { onAllNodes(named(text)).fetchSemanticsNodes().isNotEmpty() }
+
+    /** Shown as [text], or named so for screen readers (Discover's grid shows covers alone). */
+    private fun named(text: String) = hasText(text, substring = true) or hasContentDescription(text, substring = true)
 
     /** Discover's top charts, which list the whole fake catalogue; searches and show pages don't show this show. */
     private fun ComposeUiTest.waitForTopCharts() = waitForText(TOP_CHARTS_ONLY)
@@ -77,7 +80,7 @@ class WavesAppUiTest {
         waitForText("No subscriptions yet")
         onNodeWithText("Discover podcasts").performClick()
         waitForText("Signal & Waves")
-        onAllNodesWithText("Signal & Waves").onFirst().performClick()
+        onAllNodes(named("Signal & Waves")).onFirst().performClick()
 
         waitForText("Signal & Waves: Episode 1")
         onNodeWithContentDescription("Subscribe").performClick()
@@ -179,7 +182,7 @@ class WavesAppUiTest {
         waitForTopCharts()
         mainClock.advanceTimeBy(1_000)
         val listId = onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.VerticalScrollAxisRange))
-            .filterToOne(hasAnyDescendant(hasText(TOP_CHARTS_ONLY))).fetchSemanticsNode().id
+            .filterToOne(hasAnyDescendant(named(TOP_CHARTS_ONLY))).fetchSemanticsNode().id
         val list = onNode(SemanticsMatcher("list") { it.id == listId })
         val range = { list.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange] }
         assertTrue(range().maxValue() > 0f, "list can scroll")
@@ -203,7 +206,7 @@ class WavesAppUiTest {
 
         onNode(navTab("Discover")).performClick()
         waitForText("Slow Radio")
-        onAllNodesWithText("Slow Radio").onFirst().performClick()
+        onAllNodes(named("Slow Radio")).onFirst().performClick()
         waitForText("Slow Radio: Episode 1")
         onAllNodesWithContentDescription("Play").onFirst().performClick()
         waitFor("mini player") { onAllNodesWithTag(MINI_PLAYER_TAG).fetchSemanticsNodes().isNotEmpty() }
@@ -234,7 +237,7 @@ class WavesAppUiTest {
 
         onNode(navTab("Discover")).performClick()
         waitForText("Slow Radio")
-        onAllNodesWithText("Slow Radio").onFirst().performClick()
+        onAllNodes(named("Slow Radio")).onFirst().performClick()
         waitForText("Slow Radio: Episode 1")
         assertTrue(onAllNodesWithText("Played").fetchSemanticsNodes().isEmpty())
         val buttons = onAllNodesWithContentDescription("Mark complete").fetchSemanticsNodes().size
@@ -252,7 +255,7 @@ class WavesAppUiTest {
 
         onNode(navTab("Discover")).performClick()
         waitForText("Slow Radio")
-        onAllNodesWithText("Slow Radio").onFirst().performClick()
+        onAllNodes(named("Slow Radio")).onFirst().performClick()
         waitForText("Slow Radio: Episode 1")
 
         onNodeWithText("The Quiet Studio").performClick()
@@ -260,8 +263,8 @@ class WavesAppUiTest {
             onAllNodes(hasSetTextAction() and hasText("The Quiet Studio")).fetchSemanticsNodes().isNotEmpty()
         }
         waitFor("search results") {
-            onAllNodesWithText(TOP_CHARTS_ONLY).fetchSemanticsNodes().isEmpty() &&
-                onAllNodesWithText("Slow Radio").fetchSemanticsNodes().isNotEmpty()
+            onAllNodes(named(TOP_CHARTS_ONLY)).fetchSemanticsNodes().isEmpty() &&
+                onAllNodes(named("Slow Radio")).fetchSemanticsNodes().isNotEmpty()
         }
     }
 
@@ -271,7 +274,7 @@ class WavesAppUiTest {
         setContent { App(deps) }
         onNode(navTab("Discover")).performClick()
         waitForText("Slow Radio")
-        onAllNodesWithText("Slow Radio").onFirst().performClick()
+        onAllNodes(named("Slow Radio")).onFirst().performClick()
         waitForText("Slow Radio: Episode 1")
 
         mainClock.autoAdvance = false
