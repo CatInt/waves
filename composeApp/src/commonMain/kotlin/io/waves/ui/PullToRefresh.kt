@@ -6,6 +6,7 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
@@ -85,7 +86,8 @@ import kotlinx.coroutines.withTimeoutOrNull
  * rate-limited) spins for [MinSpinMillis] instead. Content whose rows animate into place once a refresh lands passes
  * [settleMillis] to hold that much longer, so the rows finish moving before the whole list does.
  *
- * Only a pull opens the gap: a refresh that starts on its own ([isRefreshing] with no pull) leaves the content be.
+ * Only a pull opens the gap: a refresh that starts on its own ([isRefreshing] with no pull) leaves the content be,
+ * unless [showsRefresh], when it opens the gap with the waves rolling too, as if pulled, until it's over.
  *
  * With [gapInContent], the content stays put and the gap opens where the content places a [PullGap] (a list item
  * under a header, say): only what's below it moves down.
@@ -103,6 +105,7 @@ fun WavesPullToRefreshBox(
     gapTop: Dp = 0.dp,
     /** Reports how far the gap is open, for things outside the box that follow it (a divider above, say). */
     progress: PullProgress? = null,
+    showsRefresh: Boolean = false,
     content: @Composable BoxScope.() -> Unit,
 ) {
     // True from a pull's release until the refresh it started is over. A refresh that nobody pulled for leaves it false,
@@ -152,7 +155,14 @@ fun WavesPullToRefreshBox(
     val shown = remember { Animatable(0f) }
     SideEffect { progress?.source = { shown.value } }
     var bouncing by remember { mutableStateOf(false) }
-    LaunchedEffect(state, armed) {
+    // A refresh nobody pulled for, shown all the same: the gap opens to the threshold and holds while it runs.
+    val unpulled = showsRefresh && isRefreshing && !armed
+    val unpulledNow by rememberUpdatedState(unpulled) // for the lambdas below, which outlive this composition
+    LaunchedEffect(state, armed, unpulled) {
+        if (unpulled) {
+            shown.animateTo(1f, OpenUnpulled)
+            return@LaunchedEffect
+        }
         if (!armed && shown.value > 0f) {
             bouncing = true
             try {
@@ -177,14 +187,16 @@ fun WavesPullToRefreshBox(
         modifier = modifier.clipToBounds().nestedScroll(closeGuard),
         state = state,
         indicator = {
-            if (!gapInContent) PullSpinner({ shown.value }, armed, lead = gapTop, Modifier.align(Alignment.TopCenter).padding(top = gapTop))
+            if (!gapInContent) {
+                PullSpinner({ shown.value }, armed || unpulled, lead = gapTop, Modifier.align(Alignment.TopCenter).padding(top = gapTop))
+            }
         },
     ) {
         // The scroll handler stays put, so a pull can keep going once the pointer is over the gap it opened.
         // Only the content moves down.
-        Box(Modifier.fillMaxSize().pullScroll(state, locked = { armed || bouncing })) {
+        Box(Modifier.fillMaxSize().pullScroll(state, locked = { armed || bouncing || unpulledNow })) {
             if (gapInContent) {
-                val gap = remember { PullGapState({ shown.value }, { armed }) }
+                val gap = remember { PullGapState({ shown.value }, { armed || unpulledNow }) }
                 CompositionLocalProvider(LocalPullGap provides gap) { Box(Modifier.fillMaxSize(), content = content) }
             } else {
                 Box(
@@ -247,6 +259,9 @@ fun PullGap(modifier: Modifier = Modifier, divider: Boolean = false) {
 }
 
 private const val MinSpinMillis = 500L
+
+/** Opens the gap for a refresh that started without a pull. */
+private val OpenUnpulled = tween<Float>(durationMillis = 300, easing = FastOutSlowInEasing)
 
 /** Eases the content back up after a refresh, settling without overshooting the top. */
 private val SpringBack = spring<Float>(dampingRatio = 1f, stiffness = 300f)
