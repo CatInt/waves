@@ -228,7 +228,7 @@ class WavesAppUiTest {
     }
 
     @Test
-    fun marksAnEpisodeCompleteAndBack() = runComposeUiTest {
+    fun marksAnEpisodeCompleteAndHidesItsButton() = runComposeUiTest {
         val deps = fakeDependencies(playerTickMs = 60 * 60 * 1000L)
         setContent { App(deps) }
 
@@ -237,15 +237,12 @@ class WavesAppUiTest {
         onAllNodesWithText("Slow Radio").onFirst().performClick()
         waitForText("Slow Radio: Episode 1")
         assertTrue(onAllNodesWithText("Played").fetchSemanticsNodes().isEmpty())
+        val buttons = onAllNodesWithContentDescription("Mark complete").fetchSemanticsNodes().size
 
         onAllNodesWithContentDescription("Mark complete").onFirst().performClick()
         waitForText("Played")
-        waitForDescription("Mark not complete")
+        assertEquals(buttons - 1, onAllNodesWithContentDescription("Mark complete").fetchSemanticsNodes().size)
         assertTrue(onAllNodesWithTag(MINI_PLAYER_TAG).fetchSemanticsNodes().isEmpty(), "nothing played")
-
-        onNodeWithContentDescription("Mark not complete").performClick()
-        waitForDescription("Mark not complete", present = false)
-        assertTrue(onAllNodesWithText("Played").fetchSemanticsNodes().isEmpty())
     }
 
     @Test

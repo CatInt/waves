@@ -257,7 +257,7 @@ fun PodcastScreen(
                         showArtworkUrl = ui.podcast.artworkUrl,
                         onPlay = { onPlay(row.episode, ui.podcast) },
                         onPause = onPause,
-                        downloadControl = downloads?.let { d -> { m -> DownloadButton(row.episode, d, m, compact = true) } },
+                        downloadControl = downloads?.let { d -> { m -> DownloadButton(row.episode, d, m, compact = true, played = row.played) } },
                         divider = index > 0 || !gapDivider,
                         dividerBelow = index < ui.episodes.lastIndex,
                         onToggleComplete = onSetCompleted?.let { { it(row.episode, !row.played) } },
