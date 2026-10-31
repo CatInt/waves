@@ -35,6 +35,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import io.waves.model.Podcast
 
@@ -152,26 +154,24 @@ fun PodcastGrid(
         columns = GridCells.Adaptive(100.dp),
         contentPadding = listContentPadding(horizontal = ScreenGutter, top = ListDividerHeight + 12.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
         modifier = modifier.fillMaxSize().verticalFadingEdge(fadeLength = 0.dp, bottomFadeLength = floatingBarBottomGap()),
     ) {
+        // Covers only, like Home's shelf; each still names its show to screen readers.
         items(podcasts) { podcast ->
             val anchor = rememberCoverAnchor(podcast.feedUrl, corner = 9.dp)
-            Column(
-                Modifier.clickable {
-                    anchor.mark()
-                    onClick(podcast)
-                },
+            Box(
+                Modifier.clip(RoundedCornerShape(10.dp))
+                    .clickable {
+                        anchor.mark()
+                        onClick(podcast)
+                    }
+                    .semantics { contentDescription = podcast.title },
             ) {
                 Artwork(
                     podcast.artworkUrl, podcast.title, Modifier.fillMaxWidth().aspectRatio(1f).then(anchor.modifier),
                     corner = 9.dp, onLoaded = anchor.onLoaded,
                 )
-                Text(
-                    podcast.title, style = MaterialTheme.typography.labelMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
-                podcast.author?.let { MetaText(it) }
             }
         }
     }
