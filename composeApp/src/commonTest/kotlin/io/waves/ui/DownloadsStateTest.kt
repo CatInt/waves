@@ -251,6 +251,34 @@ class DownloadsStateTest {
     }
 
     @Test
+    fun removingThePlayingEpisodesDownloadHandsItOnOnlineAndWaitsForItToStopOffline() = runTest {
+        val reloaded = mutableListOf<EpisodeId>()
+        val offline = MutableStateFlow(false)
+        val m = InMemoryDownloadManager(backgroundScope, stepMs = 100, steps = 10, clock = { 5L })
+        val state = DownloadsState(m, library, playback, backgroundScope, offline = offline, onLocalCopyRemoved = { reloaded += it })
+        state.download(ep1)
+        state.download(ep2)
+        settle()
+        playback.value = PlaybackState(ep1, isPlaying = true)
+
+        state.remove(ep1.id)
+        settle()
+        assertEquals(listOf(ep1.id), reloaded)
+        assertEquals(DownloadControl.NotDownloaded, state.controlOf(ep1))
+
+        offline.value = true
+        playback.value = PlaybackState(ep2, isPlaying = true)
+        state.remove(ep2.id)
+        settle()
+        assertEquals(DownloadControl.NotDownloaded, state.controlOf(ep2), "shown as removed at once")
+        assertNotNull(m.localUri(ep2.id), "the file stays while it plays")
+        playback.value = PlaybackState()
+        settle()
+        assertNull(m.localUri(ep2.id))
+        assertEquals(listOf(ep1.id), reloaded)
+    }
+
+    @Test
     fun aCachedEpisodeGoesADayAfterItWasPlayed() = runTest {
         val cache = InMemoryPlaybackCache()
         var now = 0L

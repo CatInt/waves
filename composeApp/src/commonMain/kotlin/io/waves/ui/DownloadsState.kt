@@ -73,6 +73,9 @@ data class DownloadsUiState(
  * A cached episode (kept by the player, not downloaded) is removed [cacheKeptAfterPlayed] after it was played, checked
  * every [cacheSweepEvery], unless it's the episode in the player; not while offline, where cached audio is all there is.
  *
+ * Removing the local copy of the episode in the player hands it to [onLocalCopyRemoved] to carry on from the stream;
+ * while offline, where there's no stream, the removal waits until that episode stops (it shows as removed meanwhile).
+ *
  * With a [deviceId], each finished download is added to History at the time it finished, including downloads
  * that finished in the background while the app was closed. A never-played episode also gets progress at 0:00.
  */
@@ -87,6 +90,7 @@ class DownloadsState(
     private val offline: StateFlow<Boolean> = MutableStateFlow(false),
     private val deviceId: String? = null,
     private val onLocalChange: () -> Unit = {},
+    private val onLocalCopyRemoved: (EpisodeId) -> Unit = {},
     private val cacheKeptAfterPlayed: Duration = 24.hours,
     private val cacheSweepEvery: Duration = 30.minutes,
     private val clock: () -> Long = ::currentTimeMillis,
@@ -106,8 +110,15 @@ class DownloadsState(
         combine(downloads.downloads, autoDeleteAfterFinishing) { items, auto -> DownloadsUiState(items, auto) }
             .stateIn(scope, SharingStarted.Eagerly, DownloadsUiState(autoDeleteAfterFinishing = autoDeleteAfterFinishing.value))
 
+    /** Removed while playing offline: deleted once the episode stops. */
+    private val deferredRemovals = MutableStateFlow<Set<EpisodeId>>(emptySet())
+
     fun control(episodeId: EpisodeId): Flow<DownloadControl> =
-        combine(downloads.state(episodeId), fullyCachedIds) { info, cached -> downloadControlFor(info, episodeId in cached) }
+        combine(downloads.state(episodeId), fullyCachedIds, deferredRemovals) { info, cached, deferred ->
+            if (episodeId in deferred) DownloadControl.NotDownloaded else downloadControlFor(info, episodeId in cached)
+        }
+
+    private fun activeEpisode(): EpisodeId? = playback.value.let { s -> s.episode?.id?.takeIf { !s.isEnded } }
 
     init {
         // Episode ids are the only stable key: the player may report a file:// audioUrl for downloaded episodes.
@@ -135,6 +146,15 @@ class DownloadsState(
         }
         if (deviceId != null) scope.launch { recordFinishedDownloads(deviceId) }
         scope.launch {
+            val active = playback.map { s -> s.episode?.id?.takeIf { !s.isEnded } }.distinctUntilChanged()
+            combine(deferredRemovals, active) { deferred, playing -> deferred - setOfNotNull(playing) }.collect { due ->
+                for (id in due) {
+                    deferredRemovals.value -= id
+                    guarded { deleteLocalCopy(id) }
+                }
+            }
+        }
+        scope.launch {
             while (true) {
                 guarded { sweepPlayedCache() }
                 delay(cacheSweepEvery)
@@ -149,7 +169,7 @@ class DownloadsState(
         if (cached.isEmpty()) return
         val now = clock()
         val played = library.allProgress.first().filter { it.completed }.associateBy { it.episodeId }
-        val active = playback.value.let { s -> s.episode?.id?.takeIf { !s.isEnded } }
+        val active = activeEpisode()
         for (id in cached) {
             val progress = played[id] ?: continue
             if (id == active || now - progress.updatedAtEpochMs < cacheKeptAfterPlayed.inWholeMilliseconds) continue
@@ -195,11 +215,26 @@ class DownloadsState(
     }
 
     /** Download [episode], or retry it when it failed. */
-    fun download(episode: Episode) = launch { downloads.enqueue(canonical(episode)) }
+    fun download(episode: Episode) {
+        deferredRemovals.value -= episode.id
+        launch { downloads.enqueue(canonical(episode)) }
+    }
 
     fun cancel(episodeId: EpisodeId) = launch { downloads.cancel(episodeId) }
 
-    fun remove(episodeId: EpisodeId) = launch {
+    fun remove(episodeId: EpisodeId) {
+        val playing = episodeId == activeEpisode()
+        if (playing && offline.value) {
+            deferredRemovals.value += episodeId
+            return
+        }
+        launch {
+            deleteLocalCopy(episodeId)
+            if (playing) onLocalCopyRemoved(episodeId)
+        }
+    }
+
+    private suspend fun deleteLocalCopy(episodeId: EpisodeId) {
         downloads.delete(episodeId)
         playbackCache?.remove(episodeId)
     }

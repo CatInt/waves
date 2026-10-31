@@ -201,6 +201,28 @@ class PlaybackController(
         }
     }
 
+    /**
+     * Opens the loaded episode again from its original source (a local copy if there still is one, else the stream)
+     * where it stands, keeping it playing or paused. For when the copy it was playing from is removed.
+     */
+    fun reload(episodeId: EpisodeId) {
+        val s = player.state.value
+        if (s.episode?.id != episodeId || s.isEnded) return
+        reopen(episodeId, playing = s.isPlaying)
+    }
+
+    private fun reopen(episodeId: EpisodeId, playing: Boolean) {
+        val at = player.state.value.positionMs
+        scope.launch {
+            // The player reports the episode with the address it played from; the stored one keeps the feed's.
+            val original = source?.takeIf { it.id == episodeId } ?: library.episode(episodeId)
+                ?: player.state.value.episode?.takeIf { it.id == episodeId } ?: return@launch
+            if (player.state.value.episode?.id != episodeId) return@launch
+            player.play(original, at, _podcast.value?.title)
+            if (!playing) player.pause()
+        }
+    }
+
     fun pause() {
         starting.update { it?.copy(isPlaying = false, isBuffering = false) }
         player.pause()
@@ -212,6 +234,12 @@ class PlaybackController(
         markedComplete = null
         if (starting.value != null) {
             starting.update { it?.copy(isPlaying = true, isBuffering = true) }
+            return
+        }
+        // After an error, playing again retries the same source, which may be a file since deleted: open it afresh.
+        val s = player.state.value
+        if (s.error != null && s.episode != null) {
+            reopen(s.episode.id, playing = true)
             return
         }
         player.resume()

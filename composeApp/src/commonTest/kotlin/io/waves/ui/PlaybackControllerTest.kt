@@ -81,6 +81,37 @@ class PlaybackControllerTest {
     }
 
     @Test
+    fun playingAfterAnErrorOpensTheEpisodeAfreshWhereItStood() = runTest {
+        val ep = episode(podcastA, 1)
+        val c = controller()
+        c.play(ep, podcastA)
+        runCurrent()
+        // Playing from a copy that's since gone: the player reports the file it read and an error.
+        player.mutableState.value = player.state.value.copy(
+            episode = ep.copy(audioUrl = "file:///gone.mp3"), isPlaying = false, positionMs = 90_000, error = "Source error",
+        )
+
+        c.togglePlayPause()
+        runCurrent()
+        assertEquals(ep to 90_000L, player.playCalls.last())
+        assertTrue(player.state.value.isPlaying)
+    }
+
+    @Test
+    fun reloadKeepsAPausedEpisodePaused() = runTest {
+        val ep = episode(podcastA, 1)
+        val c = controller()
+        c.play(ep, podcastA)
+        runCurrent()
+        player.advanceTo(30_000)
+        c.pause()
+        c.reload(ep.id)
+        runCurrent()
+        assertEquals(ep to 30_000L, player.playCalls.last())
+        assertFalse(player.state.value.isPlaying)
+    }
+
+    @Test
     fun pausingAnEpisodeStillStartingKeepsItPaused() = runTest {
         val ep = episode(podcastA, 1)
         val c = controller()
