@@ -245,7 +245,8 @@ fun PodcastScreen(
                 }
                 // The line under the hero that the episodes come down from, in place of the first one's own divider.
                 val gapDivider = ui.error == null && ui.episodes.isNotEmpty()
-                item(key = "pull") { PullGap(divider = gapDivider) }
+                // Fades with the rest of the page, so it doesn't linger as the page goes.
+                item(key = "pull") { PullGap(shown, divider = gapDivider) }
                 if (ui.error != null) {
                     item {
                         Text(
@@ -291,7 +292,7 @@ fun PodcastScreen(
                         .graphicsLayer { alpha = collapse * entry() }
                         .background(MaterialTheme.colorScheme.background, AboveListDivider),
                 )
-                if (barPinned) ListDivider(Modifier.padding(top = barHeight))
+                if (barPinned) ListDivider(Modifier.padding(top = barHeight).then(shown))
             }
             val rest = coverRest
             val chip = chipInRoot
