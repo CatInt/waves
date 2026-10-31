@@ -345,6 +345,25 @@ class HomeStateTest {
         assertFalse(s.state.value.refreshing)
         assertEquals("Couldn't refresh: Beta Cast", s.state.value.error)
     }
+
+    @Test
+    fun aShowHiddenFromHomeKeepsItsShelfPlaceButListsNoEpisodes() = runTest {
+        val library = InMemoryLibraryRepository()
+        library.subscribe(podcastA)
+        library.subscribe(podcastB)
+        library.upsertEpisodes(podcastA.feedUrl, listOf(episode(podcastA, 1)))
+        library.upsertEpisodes(podcastB.feedUrl, listOf(episode(podcastB, 1)))
+        val hidden = MutableStateFlow(emptySet<String>())
+        val s = HomeState(library, MapFeedRepository(emptyMap()), backgroundScope, hiddenFeeds = hidden, workContext = EmptyCoroutineContext)
+        settle()
+        assertEquals(setOf(podcastA.feedUrl, podcastB.feedUrl), s.state.value.upNext.map { it.row.episode.podcastFeedUrl }.toSet())
+
+        hidden.value = setOf(podcastB.feedUrl)
+        s.releaseOrder()
+        settle()
+        assertEquals(listOf(podcastA.feedUrl), s.state.value.upNext.map { it.row.episode.podcastFeedUrl })
+        assertEquals(2, s.state.value.shelf.size)
+    }
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)

@@ -11,6 +11,7 @@ import io.waves.model.EpisodeId
 import io.waves.model.HistoryEntry
 import io.waves.model.PlaybackProgress
 import io.waves.model.Podcast
+import io.waves.sync.ShowSettingsRecord
 import io.waves.sync.SubscriptionRecord
 import io.waves.sync.SyncMerge
 import io.waves.sync.SyncState
@@ -75,6 +76,24 @@ class SqlLibraryRepository(
 
     override val history: Flow<List<HistoryEntry>> =
         historyQ.all().asFlow().mapToList(ioContext).mapList { it.toModel() }
+
+    override val showSettings: Flow<Map<String, ShowSettingsRecord>> =
+        settings.get(SHOW_SETTINGS_KEY).asFlow().mapToOneOrNull(ioContext).map { decodeShowSettings(it).associateBy { r -> r.feedUrl } }
+
+    override suspend fun setShowSettings(record: ShowSettingsRecord) = write {
+        settings.transaction { putShowSettings(listOf(record), force = true) }
+    }
+
+    /** Stores [records] over the stored ones, each only if it wins under [SyncMerge.supersedes] unless [force]d. */
+    private fun putShowSettings(records: List<ShowSettingsRecord>, force: Boolean) {
+        if (records.isEmpty()) return
+        val stored = decodeShowSettings(settings.get(SHOW_SETTINGS_KEY).executeAsOneOrNull()).associateBy { it.feedUrl }.toMutableMap()
+        for (r in records) {
+            val old = stored[r.feedUrl]
+            if (force || old == null || SyncMerge.supersedes(r, old)) stored[r.feedUrl] = r
+        }
+        settings.put(SHOW_SETTINGS_KEY, showSettingsJson.encodeToString(showSettingsSerializer, stored.values.sortedBy { it.feedUrl }))
+    }
 
     override suspend fun subscribe(podcast: Podcast) = write {
         podcasts.upsertPodcast(podcast, subscribed = true, updatedAt = clock())
@@ -157,6 +176,7 @@ class SqlLibraryRepository(
                 archive = podcasts.subscribed(::podcastFromColumns).executeAsList()
                     .filter { archivedFeed(it.feedUrl) }
                     .flatMap { p -> episodesQ.byFeed(p.feedUrl).executeAsList().map { it.toModel() } },
+                showSettings = decodeShowSettings(settings.get(SHOW_SETTINGS_KEY).executeAsOneOrNull()),
             )
         }
     }
@@ -191,6 +211,7 @@ class SqlLibraryRepository(
                 if (stored == null || SyncMerge.supersedes(incoming, stored)) progressQ.putProgress(incoming)
             }
             state.history.forEach { historyQ.insertHistory(it) }
+            putShowSettings(state.showSettings, force = false)
             for (e in state.archive) {
                 if (!archivedFeed(e.podcastFeedUrl)) continue
                 episodesQ.insertIfAbsent(
@@ -230,6 +251,13 @@ class SqlLibraryRepository(
 
     companion object {
         const val DEVICE_ID_KEY = "deviceId"
+        const val SHOW_SETTINGS_KEY = "showSettings"
+
+        private val showSettingsJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+        private val showSettingsSerializer = kotlinx.serialization.builtins.ListSerializer(ShowSettingsRecord.serializer())
+
+        private fun decodeShowSettings(value: String?): List<ShowSettingsRecord> =
+            value?.let { runCatching { showSettingsJson.decodeFromString(showSettingsSerializer, it) }.getOrNull() }.orEmpty()
     }
 }
 

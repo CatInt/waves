@@ -1,5 +1,6 @@
 package io.waves.data
 
+import io.waves.sync.ShowSettingsRecord
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import io.waves.data.db.WavesDatabase
 import io.waves.model.Episode
@@ -72,6 +73,27 @@ class SqlLibraryRepositoryTest {
         assertEquals("Ours", stored[0].title)
         assertEquals(3600L, stored[0].durationSeconds) // the length we lacked
         assertTrue(repo.episodes("https://a/feed").first().isEmpty())
+    }
+
+    @Test fun showSettingsAreStoredExportedAndMergedOnImport() = runBlocking<Unit> {
+        repo.setShowSettings(ShowSettingsRecord("https://a", notify = false, updatedAtEpochMs = 10))
+        repo.setShowSettings(ShowSettingsRecord("https://b", inHome = false, updatedAtEpochMs = 10))
+        assertEquals(false, repo.showSettings.first()["https://a"]?.notify)
+        assertEquals(listOf("https://a", "https://b"), repo.exportSyncState().showSettings.map { it.feedUrl })
+
+        repo.importSyncState(
+            SyncState(
+                showSettings = listOf(
+                    ShowSettingsRecord("https://a", notify = true, updatedAtEpochMs = 5), // older: ours stays
+                    ShowSettingsRecord("https://b", inHome = true, updatedAtEpochMs = 20), // newer: theirs wins
+                    ShowSettingsRecord("https://c", notify = false, updatedAtEpochMs = 1),
+                ),
+            ),
+        )
+        val stored = repo.showSettings.first()
+        assertEquals(false, stored["https://a"]?.notify)
+        assertEquals(true, stored["https://b"]?.inHome)
+        assertEquals(false, stored["https://c"]?.notify)
     }
 
     @Test fun subscriptionsSortedByTitleAndUnsubscribeKeepsTombstone() = runBlocking<Unit> {
