@@ -22,9 +22,15 @@ import io.waves.player.JavaFxRuntime
 import io.waves.player.MacNowPlaying
 import io.waves.player.currentCoverArt
 import io.waves.refresh.DesktopRefresh
+import io.waves.refresh.TrayRefreshNotifier
+import io.waves.refresh.except
 import io.waves.ui.LocalWheelGesture
 import io.waves.ui.MacWheelGesture
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import java.awt.Desktop
@@ -42,10 +48,15 @@ fun main() {
     // Background feed refresh (on start, then hourly) sharing the app's database and cached HTTP client.
     // Pauses while offline; episodes a feed no longer lists are reported so their local audio can be cleaned up.
     val refresher = DesktopRefresh.createRefresher(graph.library, graph.feeds)
+    // Per-show notification choices (synced), kept current for the tray notifier to read.
+    val silencedShows = graph.library.showSettings.stateIn(CoroutineScope(Dispatchers.Default), SharingStarted.Eagerly, emptyMap())
     refresher.onEpisodesAbsent = graph::noteEpisodesAbsent
     val refresh = DesktopRefresh.start(
         graph.library,
         refresher = refresher,
+        notifier = TrayRefreshNotifier.createOrNull()?.except {
+            silencedShows.value.values.filterNot { it.notify }.mapTo(HashSet()) { it.feedUrl }
+        },
         enabled = graph.offline.map { !it },
         initiallyEnabled = !graph.offline.value,
     )

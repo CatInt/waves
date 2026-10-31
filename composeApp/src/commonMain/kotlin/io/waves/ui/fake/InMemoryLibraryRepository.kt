@@ -26,6 +26,13 @@ class InMemoryLibraryRepository(
     private val historyList = MutableStateFlow<List<HistoryEntry>>(emptyList())
     /** Podcasts kept by [rememberPodcast]; unlike [subs] these have no subscription history and aren't synced. */
     private val remembered = MutableStateFlow<Map<String, Podcast>>(emptyMap())
+    private val shows = MutableStateFlow<Map<String, io.waves.sync.ShowSettingsRecord>>(emptyMap())
+
+    override val showSettings: Flow<Map<String, io.waves.sync.ShowSettingsRecord>> = shows
+
+    override suspend fun setShowSettings(record: io.waves.sync.ShowSettingsRecord) {
+        shows.update { it + (record.feedUrl to record) }
+    }
 
     override val subscriptions: Flow<List<Podcast>> =
         subs.map { m -> m.values.filter { it.subscribed }.map { it.podcast } }.distinctUntilChanged()
@@ -101,6 +108,7 @@ class InMemoryLibraryRepository(
         subscriptions = subs.value.values.toList(),
         progress = progressById.value.values.toList(),
         history = historyList.value,
+        showSettings = shows.value.values.toList(),
     )
 
     override suspend fun importSyncState(state: SyncState) {
@@ -113,5 +121,6 @@ class InMemoryLibraryRepository(
         }
         progressById.value = merged.progress.associateBy { it.episodeId }
         historyList.value = merged.history
+        shows.value = merged.showSettings.associateBy { it.feedUrl }
     }
 }

@@ -33,6 +33,7 @@ import io.waves.feed.FeedRepository
 import io.waves.youtube.YoutubeFeedRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.time.Duration
@@ -116,6 +117,13 @@ object AndroidRefresh {
         )
     }
 
+    /** Shows the user turned notifications off for, from the running app's library or else the database. */
+    internal suspend fun silencedFeeds(context: Context): Set<String> {
+        val library = (context.applicationContext as? io.waves.WavesApplication)?.graphOrNull?.library
+            ?: createLibraryRepository(context)
+        return library.showSettings.first().values.filterNot { it.notify }.mapTo(HashSet()) { it.feedUrl }
+    }
+
     private fun networkConstraint() = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
 
     internal fun createChannel(context: Context) {
@@ -139,7 +147,8 @@ class FeedRefreshWorker(context: Context, params: WorkerParameters) : CoroutineW
         } catch (e: Exception) {
             return Result.retry()
         }
-        AndroidRefreshNotifier(applicationContext).notifyNewEpisodes(result.updates)
+        val silenced = AndroidRefresh.silencedFeeds(applicationContext)
+        AndroidRefreshNotifier(applicationContext).except { silenced }.notifyNewEpisodes(result.updates)
         return if (result.total > 0 && result.succeeded == 0) Result.retry() else Result.success()
     }
 }
