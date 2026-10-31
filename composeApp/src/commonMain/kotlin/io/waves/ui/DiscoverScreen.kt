@@ -20,7 +20,6 @@ import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -74,6 +73,8 @@ fun DiscoverScreen(state: DiscoverState, onOpenPodcast: (Podcast) -> Unit) {
                     modifier = Modifier.fillMaxSize(),
                     gapTop = ListDividerHeight,
                     progress = pull,
+                    // A search running or the charts loading show in the gap, as a pulled refresh would.
+                    showsRefresh = true,
                 ) {
                     // On the results, not the pull's box: the waves the pull opens come down through the line.
                     Box(Modifier.fillMaxSize().clip(BelowListDivider)) {
@@ -90,7 +91,7 @@ fun DiscoverScreen(state: DiscoverState, onOpenPodcast: (Podcast) -> Unit) {
 @Composable
 private fun SearchResults(ui: DiscoverUiState, onOpenPodcast: (Podcast) -> Unit) {
     when {
-        ui.searching && ui.results.isEmpty() -> Centered { CircularProgressIndicator() }
+        ui.searching && ui.results.isEmpty() -> Box(Modifier.fillMaxSize())
         ui.searchError != null -> Centered { Text(ui.searchError, color = MaterialTheme.colorScheme.error) }
         ui.results.isEmpty() -> Centered { Text("No podcasts found") }
         else -> LazyVerticalGrid(
@@ -129,7 +130,7 @@ private fun SearchResults(ui: DiscoverUiState, onOpenPodcast: (Podcast) -> Unit)
 @Composable
 private fun TopCharts(ui: DiscoverUiState, state: DiscoverState, onOpenPodcast: (Podcast) -> Unit) {
     when {
-        ui.topLoading && ui.topPodcasts.isEmpty() -> Centered { CircularProgressIndicator() }
+        ui.topLoading && ui.topPodcasts.isEmpty() -> Box(Modifier.fillMaxSize())
         ui.topError != null && ui.topPodcasts.isEmpty() -> Centered {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(ui.topError, color = MaterialTheme.colorScheme.error)
