@@ -80,6 +80,17 @@ class KtorDownloadManager(
     private val locate: suspend (String) -> String = { it },
     /** Range size for resolved YouTube streams, which are throttled when requested open-ended. */
     private val rangeChunkBytes: Long = 8L * 1024 * 1024,
+    /**
+     * Copies an episode the player has wholly in its own streaming cache to the given path, returning its size, or
+     * null when the player doesn't have it all. Lets a download take over that copy instead of fetching it again.
+     */
+    private val copyFromPlayerCache: suspend (Episode, String) -> Long? = { _, _ -> null },
+    /**
+     * Fills the player's own streaming cache with the rest of an ordinary enclosure, for [cache] to keep one copy
+     * rather than fetch a second; false when that cache can't be used, and a file is cached as before. YouTube streams
+     * are always cached as files: playing them from the player's cache needs the network to resolve them again.
+     */
+    private val fillPlayerCache: (suspend (Episode) -> Boolean)? = null,
 ) : DownloadManager {
 
     private val db = WavesDatabase(driver)
@@ -122,7 +133,7 @@ class KtorDownloadManager(
         val path = current?.filePath ?: "${directory.trimEnd('/')}/${downloadFileName(episode)}"
         // A fresh download takes over the playback cache's copy: complete files become the download outright,
         // partial ones are resumed from where caching stopped.
-        val adopted = if (current.needsTransfer()) adoptCached(episode, path) else null
+        val adopted = if (current.needsTransfer()) adoptCached(episode, path) ?: adoptPlayerCache(episode, path) else null
         val schedule = withContext(ioContext) {
             queries.transactionWithResult {
                 val row = queries.byId(id.feedUrl, id.guid).executeAsOneOrNull()
@@ -244,6 +255,9 @@ class KtorDownloadManager(
                 try {
                     val source = locate(episode.audioUrl)
                     resolved = source != episode.audioUrl
+                    if (!resolved && fillPlayerCache != null && permits.withPermit { fillPlayerCache.invoke(episode) }) {
+                        return@launch
+                    }
                     val ext = explicitAudioExtension(source)?.takeIf { resolved } ?: audioExtension(episode.audioUrl)
                     path = "$cacheDirectory/$key.$ext"
                     stamp(key)
@@ -330,6 +344,18 @@ class KtorDownloadManager(
             }
             forgetKey(cacheKey(episode))
             adopted
+        }
+    }
+
+    /** The player's streamed copy of [episode], copied to [dest] when it has the whole file. */
+    private suspend fun adoptPlayerCache(episode: Episode, dest: String): Pair<String, Long>? = withContext(ioContext) {
+        try {
+            Path(dest).parent?.let { fs.createDirectories(it) }
+            copyFromPlayerCache(episode, dest)?.let { dest to it }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null // fetch it after all
         }
     }
 

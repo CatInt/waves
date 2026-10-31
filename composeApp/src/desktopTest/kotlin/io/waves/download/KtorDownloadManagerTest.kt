@@ -70,12 +70,15 @@ class KtorDownloadManagerTest {
         resumeOnStart: Boolean = true,
         locate: suspend (String) -> String = { it },
         rangeChunkBytes: Long = 8L * 1024 * 1024,
+        copyFromPlayerCache: suspend (Episode, String) -> Long? = { _, _ -> null },
+        fillPlayerCache: (suspend (Episode) -> Boolean)? = null,
     ): KtorDownloadManager {
         val scope = CoroutineScope(SupervisorJob() + io).also { scopes += it }
         val client = HttpClient(MockEngine { req -> requests += req; handler(req) }) { downloadDefaults() }
         return KtorDownloadManager(
             driver, client, dir.absolutePath, scope, ioContext = io, clock = { now }, progressIntervalMs = 0,
             resumeOnStart = resumeOnStart, locate = locate, rangeChunkBytes = rangeChunkBytes,
+            copyFromPlayerCache = copyFromPlayerCache, fillPlayerCache = fillPlayerCache,
         )
     }
 
@@ -373,6 +376,35 @@ class KtorDownloadManagerTest {
     private fun cacheFiles() = File(dir, ".cache").listFiles().orEmpty().map { it.name }.sorted()
 
     private suspend fun eventually(check: () -> Boolean) = withTimeout(10_000) { while (!check()) delay(10) }
+
+    @Test fun aDownloadTakesOverThePlayersStreamedCopyWithoutFetching() = runBlocking<Unit> {
+        val m = newManager(copyFromPlayerCache = { _, dest -> File(dest).writeBytes(payload); payload.size.toLong() })
+        val ep = episode()
+        m.enqueue(ep)
+        val done = assertNotNull(m.await(ep.id) { it?.status == DownloadStatus.Done })
+        assertContentEquals(payload, File(done.filePath).readBytes())
+        assertEquals(0, requests.size)
+    }
+
+    @Test fun cachingAnOrdinaryEpisodeFillsThePlayersCacheInsteadOfASecondCopy() = runBlocking<Unit> {
+        val filled = mutableListOf<EpisodeId>()
+        val m = newManager(fillPlayerCache = { filled += it.id; true })
+        val ep = episode()
+        m.cache(ep)
+        eventually { filled.isNotEmpty() }
+        delay(100)
+        assertEquals(listOf(ep.id), filled)
+        assertEquals(0, requests.size)
+        assertEquals(emptyList(), cacheFiles().filter { !it.endsWith(".accessed") })
+    }
+
+    @Test fun cachingFallsBackToAFileWhenThePlayersCacheIsUnavailable() = runBlocking<Unit> {
+        val m = newManager(fillPlayerCache = { false })
+        val ep = episode()
+        m.cache(ep)
+        eventually { cached(ep).exists() }
+        assertContentEquals(payload, cached(ep).readBytes())
+    }
 
     @Test fun cachedEpisodeIsPlayableButNotADownload() = runBlocking<Unit> {
         val m = newManager()
