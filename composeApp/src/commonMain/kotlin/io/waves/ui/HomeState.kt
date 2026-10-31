@@ -83,6 +83,8 @@ class HomeState(
     /** Whole-file playback cache (listened for a minute), separate from explicit downloads. */
     private val cachedEpisodeIds: Flow<Set<EpisodeId>> = flowOf(emptySet()),
     private val onEpisodesAbsent: (Set<EpisodeId>) -> Unit = {},
+    /** Feeds whose episodes are kept off the list; their shows stay on the shelf. */
+    private val hiddenFeeds: Flow<Set<String>> = flowOf(emptySet()),
     /**
      * Where ranking and episode bookkeeping run: off the main thread. A refresh lands one show at a time, and
      * re-ranking every episode on each would stutter the pull's spinner.
@@ -123,7 +125,14 @@ class HomeState(
             }
         }
 
-    private val sources = combine(library.subscriptions, episodesByFeed, otherDownloads, ::Triple)
+    private class Sources(
+        val subscriptions: List<Podcast>,
+        val episodes: Map<String, List<Episode>>,
+        val others: Map<Podcast, List<Episode>>,
+        val hidden: Set<String>,
+    )
+
+    private val sources = combine(library.subscriptions, episodesByFeed, otherDownloads, hiddenFeeds, ::Sources)
 
     /** Null while online (every stored episode is eligible). A set while offline: only those ids are listed. */
     private val playable: Flow<Set<EpisodeId>?> =
@@ -132,11 +141,13 @@ class HomeState(
         }
 
     private val ranked: StateFlow<Ranked?> =
-        combine(sources, library.allProgress, library.history, downloadedIds, playable) { (subs, episodes, others), progress, history, downloaded, playable ->
+        combine(sources, library.allProgress, library.history, downloadedIds, playable) { src, progress, history, downloaded, playable ->
+            val subs = src.subscriptions
+            val others = src.others
             val now = clock()
             val byId = progress.associateBy { it.episodeId }
-            val subscribed = episodes.filterKeys { url -> subs.any { it.feedUrl == url } }
-            val listed = subscribed + others.mapKeys { it.key.feedUrl }
+            val subscribed = src.episodes.filterKeys { url -> subs.any { it.feedUrl == url } }
+            val listed = (subscribed + others.mapKeys { it.key.feedUrl }).filterKeys { it !in src.hidden }
             val visible = if (playable == null) listed else listed.mapValues { (_, eps) -> eps.filter { it.id in playable } }
             Ranked(
                 subscriptions = subs.sortedBy { it.title.lowercase() },

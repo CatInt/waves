@@ -95,6 +95,16 @@ class SyncMergeTest {
             publishedAtEpochMs = at, durationSeconds = seconds)
 
     @Test
+    fun showSettingsKeepTheLatestChangePerShowWhicheverWayRound() {
+        val a = SyncState(showSettings = listOf(ShowSettingsRecord("x", notify = false, updatedAtEpochMs = 5), ShowSettingsRecord("y", inHome = false, updatedAtEpochMs = 1)))
+        val b = SyncState(showSettings = listOf(ShowSettingsRecord("x", notify = true, updatedAtEpochMs = 3), ShowSettingsRecord("y", inHome = true, updatedAtEpochMs = 2)))
+        val m = SyncMerge.merge(a, b)
+        assertEquals(m, SyncMerge.merge(b, a))
+        assertEquals(listOf(false to true, true to true), m.showSettings.map { it.notify to it.inHome })
+        assertEquals(m, SyncMerge.merge(m, b))
+    }
+
+    @Test
     fun archiveIsUnionedNewestFirstPreferringACopyWithALength() {
         val a = SyncState(archive = listOf(archived("old", 1), archived("mid", 2, seconds = null)))
         val b = SyncState(archive = listOf(archived("mid", 2, seconds = 3600), archived("new", 3)))

@@ -167,3 +167,5 @@ queries alone, for example to `Setting.sq`, needs no migration.
 - `archive` (a top-level key added within version 1) carries the stored episodes of followed YouTube live archives,
   whose feed lists only the newest 15. Capped at the newest 2000 (`SyncMerge.ARCHIVE_CAP`). Import only adds
   episodes a device lacks (or a length it lacks); it never overwrites one it already has.
+- `showSettings` (a top-level key added within version 1) carries each show's notification and Home choices, last
+  change wins per feed URL. A show without a record notifies and is listed on Home.

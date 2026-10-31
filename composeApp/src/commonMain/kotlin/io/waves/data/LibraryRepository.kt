@@ -38,6 +38,12 @@ interface LibraryRepository {
     suspend fun podcast(feedUrl: String): Podcast? = null
     suspend fun upsertEpisodes(feedUrl: String, episodes: List<Episode>)
     suspend fun episode(episodeId: EpisodeId): Episode?
+
+    /** Per-show choices by feed URL; a show missing from it notifies and is listed on Home. Synced. */
+    val showSettings: Flow<Map<String, io.waves.sync.ShowSettingsRecord>> get() = kotlinx.coroutines.flow.flowOf(emptyMap())
+
+    /** Stores one show's choices (stamp [io.waves.sync.ShowSettingsRecord.updatedAtEpochMs] with the time of the change). */
+    suspend fun setShowSettings(record: io.waves.sync.ShowSettingsRecord) {}
     suspend fun saveProgress(progress: PlaybackProgress)
     suspend fun addHistory(entry: HistoryEntry)
 

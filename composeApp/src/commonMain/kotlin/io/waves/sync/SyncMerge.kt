@@ -28,6 +28,7 @@ object SyncMerge {
         progress = mergeProgress(a.progress + b.progress),
         history = mergeHistory(a.history + b.history),
         archive = mergeArchive(a.archive + b.archive),
+        showSettings = mergeShowSettings(a.showSettings + b.showSettings),
     )
 
     /** Canonical form of a single state (dedups and sorts); merge(s, s) == normalize(s). */
@@ -39,6 +40,17 @@ object SyncMerge {
      */
     fun supersedes(incoming: SubscriptionRecord, stored: SubscriptionRecord): Boolean =
         subscriptionOrder.compare(incoming, stored) >= 0
+
+    /** True if [incoming] should replace [stored] for the same show; consistent with [merge]. */
+    fun supersedes(incoming: ShowSettingsRecord, stored: ShowSettingsRecord): Boolean =
+        showSettingsOrder.compare(incoming, stored) >= 0
+
+    /** Latest change per show wins; ties fall to the field values so the choice never depends on argument order. */
+    private val showSettingsOrder: Comparator<ShowSettingsRecord> =
+        compareBy<ShowSettingsRecord> { it.updatedAtEpochMs }.thenBy { it.notify }.thenBy { it.inHome }
+
+    private fun mergeShowSettings(all: List<ShowSettingsRecord>): List<ShowSettingsRecord> =
+        all.groupBy { it.feedUrl }.map { (_, records) -> records.maxWith(showSettingsOrder) }.sortedBy { it.feedUrl }
 
     /** True if [incoming] should replace [stored] for the same episode; consistent with [merge]. */
     fun supersedes(incoming: PlaybackProgress, stored: PlaybackProgress): Boolean =

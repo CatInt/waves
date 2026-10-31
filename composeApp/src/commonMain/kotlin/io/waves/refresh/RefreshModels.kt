@@ -39,6 +39,13 @@ fun interface RefreshNotifier {
     fun notifyNewEpisodes(updates: List<PodcastUpdate>)
 }
 
+/** This notifier, leaving out the shows whose feed is among [silenced] (read at each refresh). */
+fun RefreshNotifier.except(silenced: () -> Set<String>): RefreshNotifier = RefreshNotifier { updates ->
+    val muted = silenced()
+    val shown = updates.filter { it.podcast.feedUrl !in muted }
+    if (shown.isNotEmpty()) notifyNewEpisodes(shown)
+}
+
 /** Remembers when each feed was last refreshed successfully (epoch ms). Backs the "new episode" cutoff. */
 interface RefreshStateStore {
     suspend fun lastRefreshedAt(feedUrl: String): Long?
