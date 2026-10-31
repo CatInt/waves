@@ -59,6 +59,26 @@ class CachingPodcastDirectoryTest {
     }
 
     @Test
+    fun aShowSeenOnceIsKnownByItsIdAcrossRestartsForAMonth() = runTest {
+        val apple = CountingDirectory(listOf(daily, serial))
+        val store = MapStore()
+        var now = 0L
+        // Seen in a search, never looked up.
+        CachingPodcastDirectory(apple, store, now = { now }).search("serial", "us")
+
+        now = 20 * 24 * hour
+        val later = CachingPodcastDirectory(apple, store, now = { now })
+        assertEquals(serial, later.lookup(2))
+        assertEquals(0, apple.lookups)
+
+        // A month on it's asked for again; if Apple can't answer, the one kept stands in.
+        now = 40 * 24 * hour
+        apple.chart = emptyList()
+        assertEquals(serial, CachingPodcastDirectory(apple, store, now = { now }).lookup(2))
+        assertEquals(1, apple.lookups)
+    }
+
+    @Test
     fun staleChartIsRefetchedAndServedWhenTheRefreshFails() = runTest {
         val apple = CountingDirectory(listOf(daily))
         var now = 0L
