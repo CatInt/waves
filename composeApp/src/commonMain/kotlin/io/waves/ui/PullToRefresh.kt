@@ -1,29 +1,34 @@
 package io.waves.ui
 
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.size
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
-import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshState
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -32,7 +37,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollDispatcher
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
@@ -42,9 +52,14 @@ import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.lerp
+import androidx.compose.ui.util.lerp
+import kotlin.math.ceil
+import kotlin.math.floor
 import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -84,6 +99,10 @@ fun WavesPullToRefreshBox(
     state: PullToRefreshState = rememberPullToRefreshState(),
     settleMillis: Long = 0,
     gapInContent: Boolean = false,
+    /** Where the gap's open part starts: below a divider that stays put along the top, say. */
+    gapTop: Dp = 0.dp,
+    /** Reports how far the gap is open, for things outside the box that follow it (a divider above, say). */
+    progress: PullProgress? = null,
     content: @Composable BoxScope.() -> Unit,
 ) {
     // True from a pull's release until the refresh it started is over. A refresh that nobody pulled for leaves it false,
@@ -126,12 +145,13 @@ fun WavesPullToRefreshBox(
     // The pull as drawn, in [PullToRefreshState.distanceFraction]s: follows the pull up to the threshold, except that
     // after a refresh it springs back on its own rather than with Material's much quicker hide.
     val shown = remember { Animatable(0f) }
+    SideEffect { progress?.source = { shown.value } }
     var bouncing by remember { mutableStateOf(false) }
     LaunchedEffect(state, armed) {
         if (!armed && shown.value > 0f) {
             bouncing = true
             try {
-                shown.animateTo(0f, BounceBack)
+                shown.animateTo(0f, SpringBack)
                 // Material may still be hiding the pull it held; following it before then would yank the content down.
                 snapshotFlow { state.distanceFraction }.first { it == 0f }
             } finally {
@@ -151,7 +171,9 @@ fun WavesPullToRefreshBox(
         },
         modifier = modifier.clipToBounds().nestedScroll(closeGuard),
         state = state,
-        indicator = { if (!gapInContent) PullSpinner({ shown.value }, armed, Modifier.align(Alignment.TopCenter)) },
+        indicator = {
+            if (!gapInContent) PullSpinner({ shown.value }, armed, lead = gapTop, Modifier.align(Alignment.TopCenter).padding(top = gapTop))
+        },
     ) {
         // The scroll handler stays put, so a pull can keep going once the pointer is over the gap it opened.
         // Only the content moves down.
@@ -161,7 +183,7 @@ fun WavesPullToRefreshBox(
                 CompositionLocalProvider(LocalPullGap provides gap) { Box(Modifier.fillMaxSize(), content = content) }
             } else {
                 Box(
-                    Modifier.fillMaxSize().graphicsLayer { translationY = shown.value * PullThreshold.toPx() },
+                    Modifier.fillMaxSize().graphicsLayer { translationY = shown.value * PullGapHeight.toPx() },
                     content = content,
                 )
             }
@@ -171,73 +193,190 @@ fun WavesPullToRefreshBox(
 
 private class PullGapState(val fraction: () -> Float, val refreshing: () -> Boolean)
 
+/**
+ * How far a [WavesPullToRefreshBox]'s gap is open, 0 shut to 1 at the threshold (and while refreshing), for things
+ * drawn outside it. Read it while drawing, so they follow the pull frame by frame without recomposing.
+ */
+class PullProgress internal constructor() {
+    internal var source: (() -> Float)? = null
+    val value: Float get() = source?.invoke()?.coerceIn(0f, 1f) ?: 0f
+}
+
+@Composable
+fun rememberPullProgress(): PullProgress = remember { PullProgress() }
+
+/**
+ * A divider's colour as the gap under it opens ([pull], 0 to 1): gone as soon as a pull starts, the bottom row of
+ * waves, just like it, taking its place and carrying it down ([WaveField]).
+ */
+@Suppress("UNUSED_PARAMETER")
+internal fun pullDividerColor(divider: Color, accent: Color, pull: Float): Color =
+    if (pull > 0f) Color.Transparent else divider
+
 private val LocalPullGap = staticCompositionLocalOf<PullGapState?> { null }
 
 /**
  * Where the gap of the [WavesPullToRefreshBox] around it opens, for one made with `gapInContent`: as tall as the pull,
- * with the spinner in it, and nothing at all otherwise.
+ * with the waves in it, and nothing at all otherwise. With [divider], a divider stays along the gap's top, the line
+ * the rows below come down from (the first of them then has none of its own).
  */
 @Composable
-fun PullGap(modifier: Modifier = Modifier) {
+fun PullGap(modifier: Modifier = Modifier, divider: Boolean = false) {
     val gap = LocalPullGap.current ?: return
     Box(
         modifier.fillMaxWidth()
+            .topDivider(divider, tint = { gap.fraction().coerceIn(0f, 1f) })
             .clipToBounds()
             .layout { measurable, constraints ->
                 val placeable = measurable.measure(constraints.copy(minHeight = 0, maxHeight = Constraints.Infinity))
-                val height = (gap.fraction() * PullThreshold.toPx()).roundToInt().coerceAtLeast(0)
-                layout(placeable.width, height) { placeable.place(0, 0) }
+                // The divider keeps its own height, at rest too; the gap opens under it.
+                val line = if (divider) ListDividerHeight.roundToPx() else 0
+                val height = (gap.fraction() * PullGapHeight.toPx()).roundToInt().coerceAtLeast(0)
+                layout(placeable.width, line + height) { placeable.place(0, line) }
             },
     ) {
-        Box(Modifier.fillMaxWidth()) { PullSpinner(gap.fraction, gap.refreshing(), Modifier.align(Alignment.TopCenter)) }
+        Box(Modifier.fillMaxWidth()) {
+            PullSpinner(gap.fraction, gap.refreshing(), lead = if (divider) ListDividerHeight else 0.dp, Modifier.align(Alignment.TopCenter))
+        }
     }
 }
 
 private const val MinSpinMillis = 500L
 
-/** Overshoots the top by about 7% of the gap (some 5 dp) before settling. */
-private val BounceBack = spring<Float>(dampingRatio = 0.65f, stiffness = 300f)
-
-/** How far the content sits down while refreshing: where a pull starts a refresh, Material's threshold. */
-@OptIn(ExperimentalMaterial3Api::class)
-private val PullThreshold = PullToRefreshDefaults.PositionalThreshold
+/** Eases the content back up after a refresh, settling without overshooting the top. */
+private val SpringBack = spring<Float>(dampingRatio = 1f, stiffness = 300f)
 
 /**
- * Rides on top of the pulled-down content, moving with it as if it lived in the gap the pull opens: it comes down
- * into view from behind the top edge (the box clips it) and is centred in the gap once the pull reaches the
- * threshold. Fills in as the pull nears the threshold, then spins.
- * Laid out, not drawn into a layer: a layer stops redrawing once the pull is still, and the spinner freezes.
+ * How far the content sits down while refreshing: room for the rows of waves, evenly spaced, the top one in the place
+ * of the divider above the gap. A pull still has to go Material's threshold to start a refresh; the gap opens in
+ * proportion.
+ */
+internal val PullGapHeight: Dp get() = (WaveSpace + WaveDepth) * WaveRows - ListDividerHeight
+
+/**
+ * Fills the gap the pull opens with rows of waves, edge to edge, riding on the pulled-down content as if they lived in
+ * the gap: as tall as the gap at the threshold with its bottom on the content's top, it comes down into view from
+ * behind the top edge (the box clips it). [lead]: how far above the gap the divider over it sits, whose place the top
+ * row takes.
+ * Laid out, not drawn into a layer: a layer stops redrawing once the pull is still, and the waves freeze.
  */
 @Composable
-private fun PullSpinner(fraction: () -> Float, refreshing: Boolean, modifier: Modifier = Modifier) {
-    Box(
-        modifier
-            .height(PullThreshold)
-            // As tall as the gap at the threshold, its bottom edge on the content's top edge, then [SpinnerDrop] lower so the
-            // ring sits a little below the gap's middle.
-            .offset { IntOffset(0, ((fraction() - 1f) * PullThreshold.toPx() + SpinnerDrop.toPx()).roundToInt()) },
-        contentAlignment = Alignment.Center,
-    ) {
-        val color = MaterialTheme.colorScheme.primary
-        if (refreshing) {
-            CircularProgressIndicator(Modifier.size(SpinnerSize), color = color, strokeWidth = SpinnerStroke)
-        } else {
-            CircularProgressIndicator(
-                progress = { fraction().coerceIn(0f, 1f) },
-                modifier = Modifier.size(SpinnerSize),
-                color = color,
-                strokeWidth = SpinnerStroke,
-                trackColor = Color.Transparent,
-            )
+private fun PullSpinner(fraction: () -> Float, refreshing: Boolean, lead: Dp, modifier: Modifier = Modifier) {
+    WaveField(
+        fraction = { fraction().coerceIn(0f, 1f) },
+        rolling = refreshing,
+        lead = lead,
+        modifier = modifier.fillMaxWidth().height(PullGapHeight)
+            .offset { IntOffset(0, ((fraction() - 1f) * PullGapHeight.toPx()).roundToInt()) },
+    )
+}
+
+/**
+ * [WaveRows] rows of waves, evenly spaced, coming down with the pull. Each starts out as the divider itself and, as the
+ * gap opens, opens out into its own waves and colour: the top row keeps the divider's waves, each row down is longer
+ * and flatter, the bottom one flattest. As a pull starts, the bottom row takes the divider's place (the divider goes)
+ * and carries it down along the content, the others coming into view above it. While [rolling] (a
+ * refresh runs), every row rolls on, each its own way and pace, in an endless loop.
+ */
+@Composable
+private fun WaveField(fraction: () -> Float, rolling: Boolean, lead: Dp, modifier: Modifier = Modifier) {
+    val track = listDividerColor()
+    val accent = MaterialTheme.colorScheme.primary
+    val roll = if (rolling) {
+        rememberInfiniteTransition(label = "waves").animateFloat(
+            initialValue = 0f, targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(WaveRollMillis, easing = LinearEasing)),
+            label = "roll",
+        )
+    } else {
+        null
+    }
+    Canvas(modifier) {
+        val line = ListDividerHeight.toPx()
+        val rows = WaveRows
+        // The bottom row along the box's bottom, where the divider is at the start of a pull; the top one, once the gap
+        // is open, in the divider's place above it ([lead]); the rest evenly between.
+        val step = (size.height - line + lead.toPx()) / (rows - 1)
+        val pivot = floor(size.width / 2 / DividerPeriod.toPx()) * DividerPeriod.toPx()
+        val stroke = Stroke(width = WaveStroke.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+        val open = fraction()
+        // Shut, the divider itself shows; drawn over it too, the bottom row would darken it.
+        if (open <= 0f) return@Canvas
+        val shift = roll?.value ?: 0f
+        for (row in 0 until rows) {
+            // 0 at the bottom (the divider's row), 1 at the top.
+            val up = (rows - 1 - row) / (rows - 1f)
+            val top = size.height - line - (rows - 1 - row) * step
+            // Strongest at the top, softest along the content.
+            val color = lerp(track, waveColor(track, accent, 1f - up), open)
+            // Every row starts out as the divider and, as the gap opens, opens out into its own waves: the top one
+            // stays the divider's, each row down longer and flatter, the bottom one flattest.
+            val flat = (1f - up) * open
+            val period = lerp(DividerPeriod, WavePeriod, flat).toPx()
+            val depth = lerp(WaveDepth, FlatDepth, flat).toPx()
+            // Rows alternate direction, and every third rolls twice as fast. Whole waves per turn of [roll], so where
+            // it starts over every row is just where it was: a loop without a jump.
+            val pace = (if (row % 2 == 0) 1f else -1f) * (if (row % 3 == 2) 2f else 1f)
+            // Lined up with the divider at first, each row slipping half a wave from the one above as the gap opens.
+            val offset = ((shift * pace + (rows - 1 - row) * 0.5f * open) % 1f + 1f) % 1f * period
+            // Each row centred on the line a divider would take in its place.
+            val y = top + (line - depth) / 2
+            drawPath(wavePath(size.width, y, period, depth, offset, pivot), color, style = stroke)
         }
     }
 }
 
-private val SpinnerSize = 24.dp
+/**
+ * A row of waves' colour once the gap is open, from the strongest ([soft] 0: fully opaque with a little of the accent)
+ * to the softest ([soft] 1), which still keeps some of the accent.
+ */
+private fun waveColor(track: Color, accent: Color, soft: Float): Color =
+    lerp(track, accent, lerp(WaveAccent, TopAccent, soft)).copy(alpha = track.alpha * lerp(1f, TopAlpha, soft))
 
-/** How far below the middle of the gap the ring sits; the line above the gap (a divider, a top bar) makes the middle look high. */
-private val SpinnerDrop = 10.dp
-private val SpinnerStroke = 2.5.dp
+/**
+ * A line of waves across [width], as the divider draws them: concave strokes from the base ([top] plus [depth])
+ * meeting in sharp crests at [top], flowing into each other at the base, every [period] from [pivot], moved [offset] to
+ * the right.
+ */
+private fun wavePath(width: Float, top: Float, period: Float, depth: Float, offset: Float, pivot: Float = 0f): Path = Path().apply {
+    val base = top + depth
+    // Waves keep a base at [pivot] (moved by [offset]), so a change of [period] stretches them out from there.
+    var x = pivot + offset - ceil((pivot + offset) / period) * period - period
+    moveTo(x, base)
+    while (x < width) {
+        quadraticTo(x + period * 0.3f, base, x + period / 2, top)
+        quadraticTo(x + period * 0.7f, base, x + period, base)
+        x += period
+    }
+}
+
+/**
+ * The divider's waves, which every row starts out as and the top row keeps; and the bottom row's, the longest and
+ * flattest.
+ */
+private val DividerPeriod = 12.dp
+private val WaveDepth = 3.dp
+private val WavePeriod = 15.dp
+private val FlatDepth = 2.5.dp
+private val WaveStroke = 1.dp
+
+/** Rows of waves in the gap, the bottom one the divider's, spaced evenly up to the divider's place. */
+private const val WaveRows = 5
+
+/** Between rows: sets how tall the gap opens. */
+private val WaveSpace = 9.dp
+
+/** How much of the accent the strongest row takes on (fully opaque, as the divider is). */
+private const val WaveAccent = 0.5f
+
+/** How much of the accent the softest row keeps, and how opaque it is. */
+private const val TopAccent = 0.2f
+private const val TopAlpha = 0.3f
+
+/** How long the slower rows take to roll on by one wave. */
+private const val WaveRollMillis = 2000
+
+
 
 /** Scroll per wheel unit, as on macOS (a notch, or a trackpad's precise delta). */
 private val WheelStep = 10.dp
