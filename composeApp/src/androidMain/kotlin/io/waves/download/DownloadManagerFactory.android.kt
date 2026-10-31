@@ -5,6 +5,7 @@ import app.cash.sqldelight.db.SqlDriver
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.android.Android
 import io.waves.data.SqlLibraryRepository
+import io.waves.player.PlaybackCacheBridge
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -37,6 +38,12 @@ fun createDownloadManager(
             scope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
             scheduler = WorkManagerDownloadScheduler(app),
             locate = locate,
+            // An episode the player streamed in full becomes the download as is; its streamed copy then goes.
+            copyFromPlayerCache = { episode, dest ->
+                PlaybackCacheBridge.copyFullyCached(episode, File(dest))?.also { PlaybackCacheBridge.catalog?.remove(episode.id) }
+            },
+            // Caching while listening completes the player's own copy instead of fetching a second one.
+            fillPlayerCache = PlaybackCacheBridge::fill,
         )
     }
 

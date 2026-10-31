@@ -13,6 +13,7 @@ import androidx.media3.datasource.HttpDataSource
 import androidx.media3.datasource.TransferListener
 import androidx.media3.datasource.cache.Cache
 import androidx.media3.datasource.cache.CacheDataSource
+import androidx.media3.datasource.cache.CacheWriter
 import androidx.media3.datasource.cache.ContentMetadata
 import androidx.media3.datasource.cache.NoOpCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
@@ -29,6 +30,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.job
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.concurrent.ConcurrentLinkedQueue
@@ -43,10 +47,12 @@ object PlaybackCacheBridge {
     @Volatile var catalog: PlaybackCache? = null
 
     private val cacheRef = AtomicReference<Cache?>(null)
+    private val upstreamRef = AtomicReference<DataSource.Factory?>(null)
     private val pendingKeys = ConcurrentLinkedQueue<String>()
 
-    fun attach(cache: Cache) {
+    fun attach(cache: Cache, upstream: DataSource.Factory? = null) {
         cacheRef.set(cache)
+        upstreamRef.set(upstream)
         while (true) {
             val key = pendingKeys.poll() ?: break
             runCatching { cache.removeResource(key) }
@@ -54,7 +60,76 @@ object PlaybackCacheBridge {
     }
 
     fun detach(cache: Cache) {
-        cacheRef.compareAndSet(cache, null)
+        if (cacheRef.compareAndSet(cache, null)) upstreamRef.set(null)
+    }
+
+    /**
+     * Fetches whatever of [episode] the cache doesn't hold yet into it, under the key the player uses, so the cache
+     * ends up with the whole file and nothing is fetched twice; then reports it to [catalog]. False when the cache
+     * isn't open. Stops when the calling coroutine is cancelled.
+     */
+    @OptIn(UnstableApi::class)
+    suspend fun fill(episode: Episode): Boolean {
+        val cache = cacheRef.get() ?: return false
+        val upstream = upstreamRef.get() ?: return false
+        val key = episode.id.toString()
+        val writer = CacheWriter(
+            CacheDataSource(cache, upstream.createDataSource()),
+            DataSpec.Builder().setUri(Uri.parse(episode.audioUrl)).setKey(key).build(),
+            null, null,
+        )
+        withContext(Dispatchers.IO) {
+            val stop = coroutineContext.job.invokeOnCompletion { writer.cancel() }
+            try {
+                writer.cache()
+            } catch (e: java.io.InterruptedIOException) {
+                ensureActive()
+                throw e
+            } finally {
+                stop.dispose()
+            }
+        }
+        val length = cache.getContentMetadata(key).get(ContentMetadata.KEY_CONTENT_LENGTH, -1L).takeIf { it > 0L }
+        val bytes = cache.getCachedSpans(key).sumOf { it.length }
+        catalog?.upsert(PlaybackCacheEntry(episode.id, episode.audioUrl, bytes, length, System.currentTimeMillis()))
+        return true
+    }
+
+    /**
+     * Copies [episode]'s audio to [dest] when the cache holds the whole file, returning its size; null when it doesn't
+     * (or the cache isn't open). Writes beside [dest] first, so a copy cut short leaves nothing behind.
+     */
+    @OptIn(UnstableApi::class)
+    fun copyFullyCached(episode: Episode, dest: File): Long? {
+        val cache = cacheRef.get() ?: return null
+        val (key, length) = listOf(episode.id.toString(), episode.audioUrl).firstNotNullOfOrNull { key ->
+            val length = cache.getContentMetadata(key).get(ContentMetadata.KEY_CONTENT_LENGTH, -1L)
+            if (length > 0L && cache.isCached(key, 0, length)) key to length else null
+        } ?: return null
+        val temp = File(dest.path + ".copying")
+        // No upstream: it reads only what's cached, and fails rather than fetch anything.
+        val source = CacheDataSource(cache, null)
+        try {
+            source.open(DataSpec.Builder().setUri(Uri.parse(episode.audioUrl)).setKey(key).build())
+            temp.outputStream().use { out ->
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    val n = source.read(buffer, 0, buffer.size)
+                    if (n < 0) break
+                    out.write(buffer, 0, n)
+                }
+            }
+        } catch (e: Exception) {
+            temp.delete()
+            throw e
+        } finally {
+            source.close()
+        }
+        if (temp.length() != length || !temp.renameTo(dest)) {
+            temp.delete()
+            return null
+        }
+        return length
     }
 
     /** Deletes cached bytes for [episodeId] and, when known, for [audioUrl] (the key ExoPlayer uses if no custom key was set). */
@@ -90,8 +165,8 @@ class PlaybackCacheController(
     val mediaSourceFactory: MediaSource.Factory
 
     init {
-        PlaybackCacheBridge.attach(cache)
         val upstream = DefaultDataSource.Factory(appContext, httpFactory)
+        PlaybackCacheBridge.attach(cache, upstream)
         val caching = CacheDataSource.Factory()
             .setCache(cache)
             .setUpstreamDataSourceFactory(upstream)
