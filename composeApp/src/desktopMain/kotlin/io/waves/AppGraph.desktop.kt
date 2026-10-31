@@ -68,6 +68,7 @@ fun createDesktopAppGraph(quitApp: () -> Unit): AppGraph {
         closeResources = { driver.close() },
         updateInstaller = DesktopUpdateInstaller(quitApp),
         settings = settings,
+        responseCacheDir = File(DesktopRefresh.defaultDir(), "responses").path,
         online = desktopOnline(appScope),
     )
 }

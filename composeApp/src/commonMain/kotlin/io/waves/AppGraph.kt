@@ -15,6 +15,7 @@ import io.waves.data.SqlSettingsStore
 import io.waves.download.DownloadManager
 import io.waves.download.PlaybackCache as ListeningCache
 import io.waves.model.EpisodeId
+import io.waves.net.ResponseCache
 import io.waves.offline.LocalMediaCleaner
 import io.waves.offline.PlaybackCache
 import io.waves.offline.SqlPlaybackCache
@@ -34,6 +35,7 @@ import io.waves.update.GitHubReleases
 import io.waves.update.UpdateInstaller
 import io.waves.ui.AppState
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -93,6 +95,8 @@ class AppGraph(
     val playbackCache: PlaybackCache = SqlPlaybackCache(library.driver),
     /** Whether the Internet is reachable, from the platform's detector (`androidOnline` / `desktopOnline`). */
     online: StateFlow<Boolean> = MutableStateFlow(true),
+    /** Where [ResponseCache] keeps responses; null leaves it off. */
+    private val responseCacheDir: String? = null,
 ) {
     val directory = CachingPodcastDirectory(ApplePodcastDirectory(http), SqlDirectoryCacheStore(library.driver))
     val youtube = YoutubeChannels(http)
@@ -139,6 +143,7 @@ class AppGraph(
     fun start() {
         if (started) return
         started = true
+        responseCacheDir?.let { dir -> appScope.launch(Dispatchers.Default) { ResponseCache.install(dir) } }
         cleaner.start()
         scheduler.start()
         // Whole-file cache after a minute of listening. Its eviction waits while offline.
