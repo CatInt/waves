@@ -49,6 +49,50 @@ class PlaybackControllerTest {
     }
 
     @Test
+    fun aTappedEpisodeShowsAsPlayingBeforeThePlayerHasIt() = runTest {
+        val first = episode(podcastA, 1)
+        val second = episode(podcastA, 2)
+        val c = controller()
+        c.play(first, podcastA)
+        runCurrent()
+
+        c.play(second, podcastA)
+        assertEquals(second.id, c.state.value.episode?.id, "shown before its saved position is looked up")
+        assertTrue(c.state.value.isPlaying)
+        assertEquals(listOf(first.id), player.playCalls.map { it.first.id })
+        runCurrent()
+        assertEquals(listOf(first.id, second.id), player.playCalls.map { it.first.id })
+        assertEquals(second.id, c.state.value.episode?.id)
+    }
+
+    @Test
+    fun playingAPlayedEpisodeAgainMarksItUnplayedFromTheStart() = runTest {
+        val ep = episode(podcastA, 1)
+        library.saveProgress(PlaybackProgress(ep.id, 600_000, 600_000, true, 5))
+        val c = controller()
+        c.play(ep, podcastA)
+        runCurrent()
+
+        assertEquals(listOf(ep to 0L), player.playCalls)
+        val progress = library.progress(ep.id).first()
+        assertEquals(false, progress?.completed)
+        assertEquals(0L, progress?.positionMs)
+        assertEquals(600_000L, progress?.durationMs)
+    }
+
+    @Test
+    fun pausingAnEpisodeStillStartingKeepsItPaused() = runTest {
+        val ep = episode(podcastA, 1)
+        val c = controller()
+        c.play(ep, podcastA)
+        c.pause()
+        assertFalse(c.state.value.isPlaying)
+        runCurrent()
+        assertEquals(ep.id, c.state.value.episode?.id)
+        assertFalse(c.state.value.isPlaying)
+    }
+
+    @Test
     fun restoresLastUnfinishedEpisodePausedUntilPlayed() = runTest {
         val older = episode(podcastA, 1)
         val newer = episode(podcastA, 2)
