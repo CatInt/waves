@@ -12,6 +12,7 @@ import io.ktor.http.headersOf
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -47,6 +48,30 @@ class ApplePodcastDirectoryTest {
         assertEquals("podcast", url.parameters["entity"])
         assertEquals("morning brief", url.parameters["term"])
         assertEquals("2", url.parameters["limit"])
+    }
+
+    @Test
+    fun aChartEpisodeIsFoundAmongItsShowsEpisodesWithTheFeedsGuid() = runTest {
+        val dir = directory { req ->
+            assertEquals("podcastEpisode", req.url.parameters["entity"])
+            assertEquals("1192761536", req.url.parameters["id"])
+            js(
+                """{"resultCount":3,"results":[
+                {"wrapperType":"track","kind":"podcast","collectionId":1192761536,"trackId":1192761536,"collectionName":"Pod Save America","feedUrl":"https://audioboom.com/channels/5166624.rss"},
+                {"wrapperType":"podcastEpisode","kind":"podcast-episode","trackId":1000798287302,"trackName":"Older","episodeUrl":"https://a/old.mp3","episodeGuid":"old"},
+                {"wrapperType":"podcastEpisode","kind":"podcast-episode","trackId":1000798822096,"trackName":"Trump Puts the Mid in Midterms","episodeUrl":"https://a/new.mp3","episodeGuid":"b58b0d00","trackTimeMillis":4248000,"releaseDate":"2026-10-30T09:55:00Z"}
+                ]}""",
+            )
+        }
+        val chart = ChartEpisode("Trump Puts the Mid in Midterms", "Pod Save America", null, 1192761536L, appleId = 1000798822096L)
+        val (show, episode) = assertNotNull(dir.playable(chart))
+        assertEquals("https://audioboom.com/channels/5166624.rss", show.feedUrl)
+        assertEquals("b58b0d00", episode.guid)
+        assertEquals(show.feedUrl, episode.podcastFeedUrl)
+        assertEquals("https://a/new.mp3", episode.audioUrl)
+        assertEquals(4248L, episode.durationSeconds)
+        assertEquals(1793354100000L, episode.publishedAtEpochMs)
+        assertNull(dir.playable(chart.copy(appleId = 1L)))
     }
 
     @Test
