@@ -78,7 +78,7 @@ fun HomeScreen(
             }
         } else Column(Modifier.padding(padding).fillMaxSize()) {
             val pinned = ui.shelf.isNotEmpty()
-            if (pinned) ShowShelf(ui.shelf, onOpenPodcast, Modifier.padding(top = 8.dp, bottom = 4.dp))
+            if (pinned) ShowShelf(ui.shelf, onOpenPodcast, Modifier.height(PinnedHeaderHeight).padding(top = 8.dp, bottom = 4.dp))
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 // Only the list moves with a pull; the shelf and its divider stay put above the gap.
                 val pull = rememberPullProgress()
@@ -196,6 +196,9 @@ private fun ShowShelf(shows: List<Podcast>, onOpenPodcast: (Podcast) -> Unit, mo
 }
 
 private val ShelfCoverSize = 92.dp
+
+/** How tall a screen's pinned header is above its list's top divider (Home's shelf), so the line sits alike everywhere. */
+internal val PinnedHeaderHeight = 8.dp + ShelfCoverSize + 8.dp + 4.dp
 
 /** About how long `animateItem`'s default placement spring takes to bring a row to its new place. */
 private const val RowMoveMillis = 400L
