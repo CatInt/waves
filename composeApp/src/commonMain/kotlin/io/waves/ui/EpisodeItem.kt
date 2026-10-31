@@ -216,12 +216,16 @@ private val ZigzagStroke = 1.dp
 /** Height a zigzag divider takes up, as drawn by [ListDivider] and [topDivider]. */
 internal val ListDividerHeight = ZigzagHeight + ZigzagStroke
 
-/** Full-width zigzag across the top of a list row; lists pass false for their first row. */
+/**
+ * Full-width zigzag across the top of a list row; lists pass false for their first row. [tint]: how far a pull-to-refresh
+ * gap under it is open, which colours it towards the waves there ([pullDividerColor]).
+ */
 @Composable
-internal fun Modifier.topDivider(show: Boolean): Modifier {
+internal fun Modifier.topDivider(show: Boolean, tint: () -> Float = { 0f }): Modifier {
     if (!show) return this
     val color = listDividerColor()
-    return drawBehind { drawZigzag(color, top = 0f) }
+    val accent = MaterialTheme.colorScheme.primary
+    return drawBehind { drawZigzag(pullDividerColor(color, accent, tint()), top = 0f) }
 }
 
 /**
@@ -305,15 +309,19 @@ private class ZigzagEdgesShape(private val top: Boolean, private val reach: Dp) 
     }
 }
 
-/** Full-width zigzag between list sections, like [EpisodeItem]'s dividers. */
+/** Full-width zigzag between list sections, like [EpisodeItem]'s dividers; [tint] as for [topDivider]. */
 @Composable
-internal fun ListDivider(modifier: Modifier = Modifier) {
+internal fun ListDivider(modifier: Modifier = Modifier, tint: () -> Float = { 0f }) {
     val color = listDividerColor()
-    Spacer(modifier.fillMaxWidth().height(ListDividerHeight).drawBehind { drawZigzag(color, top = 0f) })
+    val accent = MaterialTheme.colorScheme.primary
+    Spacer(
+        modifier.fillMaxWidth().height(ListDividerHeight)
+            .drawBehind { drawZigzag(pullDividerColor(color, accent, tint()), top = 0f) },
+    )
 }
 
 /** "人人人人": concave strokes meeting in sharp tips at [top], flowing smoothly into each other at the base. */
-private fun DrawScope.drawZigzag(color: Color, top: Float) {
+internal fun DrawScope.drawZigzag(color: Color, top: Float) {
     val period = ZigzagPeriod.toPx()
     val stroke = ZigzagStroke.toPx()
     val peak = top + stroke / 2

@@ -13,7 +13,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
-import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshState
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
@@ -272,7 +271,7 @@ class PullToRefreshUiTest {
         // The header holds still; the rows under the gap sit a whole threshold lower while refreshing.
         assertEquals(header.value, onNodeWithText("Header").getBoundsInRoot().top.value, 0.5f)
         val dropped = (onNodeWithText("Row 0").getBoundsInRoot().top - row).value
-        assertEquals(PullToRefreshDefaults.PositionalThreshold.value, dropped, 1f)
+        assertEquals(PullGapHeight.value, dropped, 1f)
         refreshing = false
         repeat(20) { mainClock.advanceTimeBy(100) }
         assertEquals(row.value, onNodeWithText("Row 0").getBoundsInRoot().top.value, 0.5f)
@@ -292,7 +291,7 @@ class PullToRefreshUiTest {
         val pulled = onNodeWithText("Row 0").getBoundsInRoot().top - resting
         assertTrue(state.distanceFraction > 1f, "pulled to ${state.distanceFraction}")
         // The gap stops at the distance that triggers a refresh, whatever the pull does past it.
-        assertEquals(PullToRefreshDefaults.PositionalThreshold.value, pulled.value, 1f)
+        assertEquals(PullGapHeight.value, pulled.value, 1f)
     }
 
     @Test
