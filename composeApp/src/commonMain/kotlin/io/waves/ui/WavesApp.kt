@@ -126,6 +126,9 @@ class AppState(deps: AppDependencies, scope: kotlinx.coroutines.CoroutineScope) 
             .distinctUntilChanged(),
     )
     val history = HistoryState(deps.library, scope)
+    init {
+        ListeningTracker(deps.player.state, deps.library, deps.deviceId, scope).start()
+    }
     val recentFetches = RecentFetches(deps.feedFetches)
     /** Null while online. While offline: the episodes that can play without a connection. */
     val offlinePlayable: StateFlow<Set<EpisodeId>?> = combine(
