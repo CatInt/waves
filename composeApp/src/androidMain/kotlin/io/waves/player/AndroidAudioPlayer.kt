@@ -58,6 +58,8 @@ class AndroidAudioPlayer(
     private var currentEpisode: Episode? = null
     private var currentPodcastTitle: String? = null
     private var playGeneration = 0L
+    /** The [playGeneration] whose media is still being located: the old item, paused meanwhile, isn't published. */
+    private var locating: Long? = null
     private var wantPlaying = false
     private var released = false
     private val ticker = PositionTicker(scope) { publish() }
@@ -124,8 +126,8 @@ class AndroidAudioPlayer(
         load(episode, startPositionMs, podcastTitle)
 
     /**
-     * Shows [episode] immediately (buffering), then opens it. YouTube watch URLs are resolved to an audio
-     * stream first; the episode stored on the media item keeps the stable watch URL.
+     * Shows [episode] immediately (buffering), stops the one before, then opens it. YouTube watch URLs are resolved
+     * to an audio stream first; the episode stored on the media item keeps the stable watch URL.
      */
     private fun load(episode: Episode, startPositionMs: Long, podcastTitle: String?) {
         val gen = ++playGeneration
@@ -144,12 +146,15 @@ class AndroidAudioPlayer(
         scope.launch {
             currentEpisode = episode
             currentPodcastTitle = podcastTitle
+            locating = gen
+            withController { c -> if (locating == gen) c.pause() }
             val mediaUrl = try {
                 locate(episode.audioUrl)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 if (gen == playGeneration) {
+                    locating = null
                     wantPlaying = false
                     _state.update { it.copy(isPlaying = false, isBuffering = false, error = e.message ?: "Couldn't open this episode") }
                 }
@@ -158,6 +163,7 @@ class AndroidAudioPlayer(
             if (gen != playGeneration) return@launch
             withController { c ->
                 if (gen != playGeneration) return@withController
+                locating = null
                 c.setMediaItem(mediaItemOf(episode, podcastTitle, mediaUrl), start)
                 c.setPlaybackSpeed(_state.value.speed)
                 c.prepare()
@@ -177,6 +183,7 @@ class AndroidAudioPlayer(
         wantPlaying = true
         _state.update { it.copy(isPlaying = true, isEnded = false, error = null) }
         withController { c ->
+            if (locating == playGeneration) return@withController // the episode being opened plays once it's found
             if (c.mediaItemCount == 0) {
                 // The service died and came back empty (crash / system kill): reload where we left off.
                 val position = if (_state.value.isEnded) 0 else _state.value.positionMs
@@ -215,6 +222,7 @@ class AndroidAudioPlayer(
     /** Main thread: copies the controller's state into [state] and runs the ticker while playing. */
     private fun publish() {
         val c = connection.current ?: return
+        if (locating == playGeneration) return
         if (c.mediaItemCount == 0) {
             // Nothing loaded (fresh or restarted service): keep our episode/position, just reflect idle.
             ticker.stop()
