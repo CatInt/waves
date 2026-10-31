@@ -66,15 +66,22 @@ fun DiscoverScreen(state: DiscoverState, onOpenPodcast: (Podcast) -> Unit) {
                 )
             }
             Box(Modifier.weight(1f).fillMaxWidth()) {
+                val pull = rememberPullProgress()
                 // Results scrolling up end at the divider's line.
                 WavesPullToRefreshBox(
                     isRefreshing = if (ui.isSearching) ui.searching else ui.topLoading,
                     onRefresh = state::refresh,
-                    modifier = Modifier.fillMaxSize().clip(BelowListDivider),
+                    modifier = Modifier.fillMaxSize(),
+                    gapTop = ListDividerHeight,
+                    progress = pull,
                 ) {
-                    if (ui.isSearching) SearchResults(ui, onOpenPodcast) else TopCharts(ui, state, onOpenPodcast)
+                    // On the results, not the pull's box: the waves the pull opens come down through the line.
+                    Box(Modifier.fillMaxSize().clip(BelowListDivider)) {
+                        if (ui.isSearching) SearchResults(ui, onOpenPodcast) else TopCharts(ui, state, onOpenPodcast)
+                    }
                 }
-                ListDivider()
+                // Takes on the waves' colour as a pull opens the gap under it.
+                ListDivider(tint = { pull.value })
             }
         }
     }

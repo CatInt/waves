@@ -227,7 +227,9 @@ fun PodcastScreen(
                         creator = ui.podcast.author?.takeIf { it.isNotBlank() } ?: creatorName,
                     )
                 }
-                item(key = "pull") { PullGap() }
+                // The line under the hero that the episodes come down from, in place of the first one's own divider.
+                val gapDivider = ui.error == null && ui.episodes.isNotEmpty()
+                item(key = "pull") { PullGap(divider = gapDivider) }
                 if (ui.error != null) {
                     item {
                         Text(
@@ -256,7 +258,7 @@ fun PodcastScreen(
                         onPlay = { onPlay(row.episode, ui.podcast) },
                         onPause = onPause,
                         downloadControl = downloads?.let { d -> { m -> DownloadButton(row.episode, d, m, compact = true) } },
-                        divider = true,
+                        divider = index > 0 || !gapDivider,
                         dividerBelow = index < ui.episodes.lastIndex,
                         onToggleComplete = onSetCompleted?.let { { it(row.episode, !row.played) } },
                         modifier = shown,

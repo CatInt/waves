@@ -81,12 +81,13 @@ fun HomeScreen(
             if (pinned) ShowShelf(ui.shelf, onOpenPodcast, Modifier.padding(top = 8.dp, bottom = 4.dp))
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 // Only the list moves with a pull; the shelf and its divider stay put above the gap.
+                val pull = rememberPullProgress()
                 WavesPullToRefreshBox(
                     isRefreshing = ui.refreshing,
                     onRefresh = { if (!ui.offline) state.refreshAll() },
-                    // Under the shelf, the list and the pull's ring end at its divider's line instead of fading out:
-                    // rows scrolling up, and the ring as it comes down into the gap.
-                    modifier = Modifier.fillMaxSize().then(if (pinned) Modifier.clip(BelowListDivider) else Modifier),
+                    modifier = Modifier.fillMaxSize(),
+                    gapTop = if (pinned) ListDividerHeight else 0.dp,
+                    progress = pull,
                     // A finished refresh re-sorts Up next; the rows slide into their new order before the list springs back.
                     settleMillis = RowMoveMillis,
                 ) {
@@ -96,6 +97,9 @@ fun HomeScreen(
                     if (pinned) SnapToTopLine(list, reach = EpisodeSnapReach, guides = guides)
                     LazyColumn(
                         Modifier.fillMaxSize()
+                            // Under the shelf, rows scrolling up end at its divider's line instead of fading out. On
+                            // the list, not the pull's box: the waves the pull opens come down through that line.
+                            .then(if (pinned) Modifier.clip(BelowListDivider) else Modifier)
                             .snapGuideList(guides)
                             .verticalFadingEdge(
                                 fadeLength = if (pinned) 0.dp else 8.dp,
@@ -154,7 +158,8 @@ fun HomeScreen(
                     }
                 }
                 // Stays put as rows scroll under it.
-                if (pinned) ListDivider()
+                // Takes on the waves' colour as a pull opens the gap under it.
+                if (pinned) ListDivider(tint = { pull.value })
             }
         }
     }
