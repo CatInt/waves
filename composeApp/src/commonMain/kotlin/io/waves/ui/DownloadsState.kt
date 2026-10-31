@@ -1,5 +1,6 @@
 package io.waves.ui
 
+import io.waves.currentTimeMillis
 import io.waves.data.LibraryRepository
 import io.waves.data.SettingsStore
 import io.waves.download.DownloadInfo
@@ -14,6 +15,7 @@ import io.waves.player.PlaybackState
 import io.waves.ui.fake.InMemorySettingsStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -25,6 +27,9 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.minutes
 
 /** What the per-episode download control shows. */
 sealed interface DownloadControl {
@@ -65,13 +70,16 @@ data class DownloadsUiState(
  * deletions wait and run once the connection is back. Removing a download by hand always deletes it, and
  * also drops a playback-cache entry for that episode.
  *
+ * A cached episode (kept by the player, not downloaded) is removed [cacheKeptAfterPlayed] after it was played, checked
+ * every [cacheSweepEvery], unless it's the episode in the player; not while offline, where cached audio is all there is.
+ *
  * With a [deviceId], each finished download is added to History at the time it finished, including downloads
  * that finished in the background while the app was closed. A never-played episode also gets progress at 0:00.
  */
 class DownloadsState(
     private val downloads: DownloadManager,
     private val library: LibraryRepository,
-    playback: StateFlow<PlaybackState>,
+    private val playback: StateFlow<PlaybackState>,
     private val scope: CoroutineScope,
     private val settings: SettingsStore = InMemorySettingsStore(),
     private val playbackCache: PlaybackCache? = null,
@@ -79,6 +87,9 @@ class DownloadsState(
     private val offline: StateFlow<Boolean> = MutableStateFlow(false),
     private val deviceId: String? = null,
     private val onLocalChange: () -> Unit = {},
+    private val cacheKeptAfterPlayed: Duration = 24.hours,
+    private val cacheSweepEvery: Duration = 30.minutes,
+    private val clock: () -> Long = ::currentTimeMillis,
 ) {
     val autoDeleteAfterFinishing: StateFlow<Boolean> = settings.settings.map { it.autoDeleteDownloads }
         .stateIn(scope, SharingStarted.Eagerly, settings.settings.value.autoDeleteDownloads)
@@ -123,6 +134,29 @@ class DownloadsState(
             }
         }
         if (deviceId != null) scope.launch { recordFinishedDownloads(deviceId) }
+        scope.launch {
+            while (true) {
+                guarded { sweepPlayedCache() }
+                delay(cacheSweepEvery)
+            }
+        }
+    }
+
+    /** Removes cached episodes played at least [cacheKeptAfterPlayed] ago. */
+    private suspend fun sweepPlayedCache() {
+        if (offline.value) return
+        val cached = fullyCachedIds.value
+        if (cached.isEmpty()) return
+        val now = clock()
+        val played = library.allProgress.first().filter { it.completed }.associateBy { it.episodeId }
+        val active = playback.value.let { s -> s.episode?.id?.takeIf { !s.isEnded } }
+        for (id in cached) {
+            val progress = played[id] ?: continue
+            if (id == active || now - progress.updatedAtEpochMs < cacheKeptAfterPlayed.inWholeMilliseconds) continue
+            if (downloads.state(id).first() != null) continue // a download of it, in any state, is the user's
+            downloads.delete(id)
+            playbackCache?.remove(id)
+        }
     }
 
     private suspend fun recordFinishedDownloads(deviceId: String) {
