@@ -131,15 +131,20 @@ fun WavesPullToRefreshBox(
         }
     }
     // While the gap is closing, swallow a downward fling before Material sees it. A coast after the fingers lift
-    // otherwise starts the refresh over, and the spinner never leaves.
+    // otherwise starts the refresh over, and the spinner never leaves. Material sees the lift after this, too.
     val closing = rememberUpdatedState(cycle && !armed)
     val closeGuard = remember {
         object : NestedScrollConnection {
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset =
                 if (closing.value && available.y > 0f) Offset(0f, available.y) else Offset.Zero
 
-            override suspend fun onPreFling(available: Velocity): Velocity =
-                if (closing.value) available else Velocity.Zero
+            override suspend fun onPreFling(available: Velocity): Velocity = when {
+                closing.value -> available
+                // Flicked up off an open gap: let go as a plain lift would. The flick's speed would otherwise carry
+                // on into the list and send it scrolling while the gap closes.
+                available.y < 0f && state.distanceFraction > 0f -> Velocity(0f, available.y)
+                else -> Velocity.Zero
+            }
         }
     }
     // The pull as drawn, in [PullToRefreshState.distanceFraction]s: follows the pull up to the threshold, except that
