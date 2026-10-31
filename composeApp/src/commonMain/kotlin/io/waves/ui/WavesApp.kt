@@ -318,7 +318,13 @@ private fun CurrentScreen(
                                 downloads = app.downloads,
                                 onSetCompleted = app.playback::setCompleted,
                             )
-                            Tab.Discover -> DiscoverScreen(app.discover) { openPodcast(it, true) }
+                            Tab.Discover -> DiscoverScreen(
+                                app.discover,
+                                onOpenPodcast = { openPodcast(it, true) },
+                                playback = playback,
+                                onPlay = app.playback::play,
+                                onPause = app.playback::pause,
+                            )
                             Tab.History -> HistoryScreen(app.history, deps.deviceId, playFromHistory, app.downloads, app.settings)
                             Tab.Settings -> SettingsScreen(app.settings, deps.deviceId, app.downloads, app.updates)
                         }

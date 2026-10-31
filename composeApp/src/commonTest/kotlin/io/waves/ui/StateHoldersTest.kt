@@ -44,8 +44,31 @@ class DiscoverStateTest {
     fun loadsTopCharts() = runTest {
         val s = DiscoverState(RecordingDirectory(listOf(podcastA, podcastB)), backgroundScope)
         settle()
-        assertEquals(listOf(podcastA, podcastB), s.state.value.topPodcasts)
+        assertEquals(listOf(podcastA, podcastB), s.state.value.topShows.map { it.podcast })
         assertFalse(s.state.value.topLoading)
+    }
+
+    @Test
+    fun aTopEpisodeIsLookedUpOnceAndPlaysWithoutLookingAgain() = runTest {
+        val found = io.waves.model.Episode(guid = "g", podcastFeedUrl = podcastA.feedUrl, title = "E", audioUrl = "a.mp3", durationSeconds = 600)
+        val asked = mutableListOf<Long>()
+        val dir = object : io.waves.search.PodcastDirectory by RecordingDirectory(listOf(podcastA)) {
+            override suspend fun playable(episode: io.waves.search.ChartEpisode, country: String) =
+                (podcastA to found).takeIf { asked.add(episode.appleId); episode.appleId == 1L }
+        }
+        val s = DiscoverState(dir, backgroundScope)
+        val top = io.waves.search.ChartEpisode("E", "A", null, showAppleId = 9, appleId = 1)
+        val gone = io.waves.search.ChartEpisode("F", "A", null, showAppleId = 9, appleId = 2)
+        s.lookUpTopEpisode(top)
+        s.lookUpTopEpisode(top)
+        s.lookUpTopEpisode(gone)
+        settle()
+        assertEquals(found, s.state.value.playableEpisodes[1L]?.second)
+        assertEquals(setOf(2L), s.state.value.missingEpisodes)
+        var played: io.waves.model.Episode? = null
+        s.playTopEpisode(top, { e, _ -> played = e }) {}
+        assertEquals(found, played)
+        assertEquals(listOf(1L, 2L), asked)
     }
 
     @Test
@@ -57,7 +80,7 @@ class DiscoverStateTest {
         s.refresh()
         settle()
         assertEquals(2, dir.topCountries.size)
-        assertEquals(listOf(podcastA), s.state.value.topPodcasts)
+        assertEquals(listOf(podcastA), s.state.value.topShows.map { it.podcast })
         assertNull(s.state.value.topError)
         assertTrue(dir.searches.isEmpty())
     }
