@@ -144,7 +144,7 @@ fun HomeScreen(
                                 show = item.podcast.takeIf { it.title.isNotBlank() },
                                 onOpenShow = { onOpenPodcast(item.podcast) },
                                 badge = item.reason.label,
-                                downloadControl = downloads?.let { d -> { m -> DownloadButton(item.row.episode, d, m, compact = true) } },
+                                downloadControl = downloads?.let { d -> { m -> DownloadButton(item.row.episode, d, m, compact = true, played = item.row.played) } },
                                 divider = index > 0,
                                 dividerBelow = index < ui.upNext.lastIndex,
                                 // Right under the shelf's divider, the first row's ripple fills up to its zigzag, where the

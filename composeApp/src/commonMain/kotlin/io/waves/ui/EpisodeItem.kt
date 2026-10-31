@@ -1,7 +1,6 @@
 package io.waves.ui
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.indication
@@ -74,7 +73,7 @@ private val RowControlSize = 40.dp
  * @param dividerBelow whether the next row draws a divider, so the press ripple reaches down to it.
  * @param dividerAbove whether the row sits right under a [ListDivider] that stays put (a first row under a pinned
  *   shelf), so the press ripple reaches up to it.
- * @param onToggleComplete after the download control: marks the episode complete, or once played, not complete.
+ * @param onToggleComplete after the download control: marks the episode complete; hidden once it's played.
  */
 @Composable
 fun EpisodeItem(
@@ -180,14 +179,18 @@ fun EpisodeItem(
                 modifier = Modifier.padding(top = 2.dp, end = 8.dp).keepWhole(snapGuides),
             )
         }
-        Row(Modifier.padding(top = 4.dp).keepWhole(snapGuides), verticalAlignment = Alignment.CenterVertically) {
+        // As tall as its buttons even when a played episode shows none, so rows keep one height.
+        Row(
+            Modifier.padding(top = 4.dp).height(RowControlSize).keepWhole(snapGuides),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides RowControlSize) {
                 PlayPill(row, isCurrent, isPlaying, showArtworkUrl, onClick = if (isPlaying) onPause else onPlay)
                 Spacer(Modifier.width(6.dp))
                 downloadControl?.invoke(Modifier.size(RowControlSize))
-                if (onToggleComplete != null) {
+                if (onToggleComplete != null && !row.played) {
                     IconButton(onClick = onToggleComplete, modifier = Modifier.size(RowControlSize)) {
-                        CompleteGlyph(row.played, if (row.played) "Mark not complete" else "Mark complete")
+                        CompleteGlyph("Mark complete")
                     }
                 }
             }
@@ -386,17 +389,15 @@ private fun PlayPill(row: EpisodeRow, isCurrent: Boolean, isPlaying: Boolean, co
     }
 }
 
-/** A check in the download control's circles: outlined until complete, then filled with the check knocked out. */
+/** An outlined check in the download control's circles. */
 @Composable
-private fun CompleteGlyph(complete: Boolean, description: String) {
+private fun CompleteGlyph(description: String) {
     val colors = MaterialTheme.colorScheme
-    val ink = colors.onSurface
     Box(
-        Modifier.size(RowGlyphSize)
-            .then(if (complete) Modifier.background(ink, CircleShape) else Modifier.border(1.dp, colors.outlineVariant, CircleShape)),
+        Modifier.size(RowGlyphSize).border(1.dp, colors.outlineVariant, CircleShape),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(Icons.Rounded.Check, description, Modifier.size(RowGlyphSize * 0.62f), tint = if (complete) colors.surface else ink)
+        Icon(Icons.Rounded.Check, description, Modifier.size(RowGlyphSize * 0.62f), tint = colors.onSurface)
     }
 }
 

@@ -148,7 +148,7 @@ internal fun MenuBarPanel(app: AppState, onOpenApp: () -> Unit, onQuit: () -> Un
                             show = item.podcast.takeIf { it.title.isNotBlank() },
                             onOpenShow = { openShow(item.podcast) },
                             badge = item.reason.label,
-                            downloadControl = app.downloads?.let { d -> { m -> DownloadButton(item.row.episode, d, m, compact = true) } },
+                            downloadControl = app.downloads?.let { d -> { m -> DownloadButton(item.row.episode, d, m, compact = true, played = item.row.played) } },
                             showDescription = false,
                             divider = pinned || index > 0,
                             dividerBelow = index < home.upNext.lastIndex,
