@@ -142,6 +142,7 @@ class AppState(deps: AppDependencies, scope: kotlinx.coroutines.CoroutineScope) 
             it, deps.library, deps.player.state, scope, deps.settings,
             playbackCache = deps.playbackCache, offline = deps.offline,
             deviceId = deps.deviceId, onLocalChange = deps.onLocalChange,
+            onLocalCopyRemoved = playback::reload,
         )
     }
     /** Null without [AppDependencies.releases] and [AppDependencies.updateInstaller]; the Updates section is hidden then. */
