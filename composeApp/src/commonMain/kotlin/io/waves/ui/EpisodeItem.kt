@@ -2,7 +2,9 @@ package io.waves.ui
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.indication
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -237,6 +239,7 @@ internal fun Modifier.topDivider(show: Boolean, tint: () -> Float = { 0f }): Mod
  * neighbouring ripples meet along the line. With [above] (and no divider of its own) it reaches up under a
  * [ListDivider] just above the row, whose [BelowListDivider] clip cuts it to the line. Only the row itself takes taps.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun Modifier.zigzagClickable(top: Boolean, bottom: Boolean, above: Boolean = false, onClick: () -> Unit): Modifier {
     val interaction = remember { MutableInteractionSource() }
@@ -263,7 +266,8 @@ internal fun Modifier.zigzagClickable(top: Boolean, bottom: Boolean, above: Bool
             val placeable = measurable.measure(constraints.copy(minHeight = 0, maxHeight = maxHeight))
             layout(placeable.width, placeable.height + extra) { placeable.place(0, up) }
         }
-        .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+        // A long press does nothing: held, then let go, it doesn't count as a tap either.
+        .combinedClickable(interactionSource = interaction, indication = null, onClick = onClick, onLongClick = {})
 }
 
 /** Everything below a [ListDivider] drawn at the top: clips content scrolling up under the divider to its line. */
