@@ -30,6 +30,7 @@ import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.hours
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class DownloadsStateTest {
@@ -247,6 +248,34 @@ class DownloadsStateTest {
         s.state.onControlClick(ep1, DownloadControl.Cached)
         settle()
         assertEquals(DownloadControl.Downloaded, s.state.controlOf(ep1))
+    }
+
+    @Test
+    fun aCachedEpisodeGoesADayAfterItWasPlayed() = runTest {
+        val cache = InMemoryPlaybackCache()
+        var now = 0L
+        val m = InMemoryDownloadManager(backgroundScope, clock = { 5L })
+        val state = DownloadsState(
+            m, library, playback, backgroundScope, playbackCache = cache,
+            cacheSweepEvery = 1.hours, clock = { now },
+        )
+        cache.upsert(PlaybackCacheEntry(ep1.id, ep1.audioUrl, 100, 100, 1))
+        cache.upsert(PlaybackCacheEntry(ep2.id, ep2.audioUrl, 100, 100, 1))
+        library.saveProgress(PlaybackProgress(ep1.id, 600_000, 600_000, completed = true, updatedAtEpochMs = 0))
+        library.saveProgress(PlaybackProgress(ep2.id, 60_000, 600_000, completed = false, updatedAtEpochMs = 0))
+        settle()
+        assertEquals(DownloadControl.Cached, state.controlOf(ep1))
+
+        now = 23 * 3_600_000L
+        advanceTimeBy(3_600_000)
+        runCurrent()
+        assertEquals(DownloadControl.Cached, state.controlOf(ep1), "kept for the first day")
+
+        now = 25 * 3_600_000L
+        advanceTimeBy(3_600_000)
+        runCurrent()
+        assertEquals(DownloadControl.NotDownloaded, state.controlOf(ep1))
+        assertEquals(DownloadControl.Cached, state.controlOf(ep2), "not played yet")
     }
 
     @Test
