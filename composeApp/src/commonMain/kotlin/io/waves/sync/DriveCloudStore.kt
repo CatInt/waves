@@ -66,6 +66,13 @@ class DriveCloudStore(
         return decodeContent(response.body<ByteArray>()) to (file.version ?: "")
     }
 
+    /** The version an upload left the file at, from its response; null if that can't be read (the upload still stands). */
+    private suspend fun writtenVersion(response: HttpResponse): String? =
+        runCatching { json.decodeFromString<DriveFile>(response.bodyAsText()).version }.getOrNull()
+
+    /** Just the file listing: no download. */
+    override suspend fun revision(name: String): String? = find(name)?.let { it.version ?: "" }
+
     private fun decodeContent(bytes: ByteArray): String {
         if (!isGzip(bytes)) return bytes.decodeToString()
         val inflated = try {
@@ -81,9 +88,14 @@ class DriveCloudStore(
         else content.encodeToByteArray() to ContentType.Application.Json.withParameter("charset", "UTF-8")
 
     override suspend fun write(name: String, content: String, ifRevision: String?) {
+        writeForRevision(name, content, ifRevision)
+    }
+
+    /** The upload's response carries the new version: no further request needed to learn it. */
+    override suspend fun writeForRevision(name: String, content: String, ifRevision: String?): String? {
         // Re-check right before uploading: Drive has no conditional write.
         val existing = find(name)
-        when {
+        return when {
             ifRevision == null && existing != null ->
                 // Another device created the file since our read: merge with it instead of clobbering it.
                 throw ConflictException("Remote $name was created meanwhile (revision ${existing.version})")
@@ -109,7 +121,7 @@ class DriveCloudStore(
         return json.decodeFromString<FileList>(response.bodyAsText()).files.firstOrNull()
     }
 
-    private suspend fun create(name: String, content: String) {
+    private suspend fun create(name: String, content: String): String? {
         val (media, mediaType) = encodeContent(content)
         val boundary = "waves-" + Random.nextLong().toULong().toString(16)
         val metadata = """{"name":${JsonPrimitive(name)},"parents":["appDataFolder"],"mimeType":${JsonPrimitive(mediaType.withoutParameters().toString())}}"""
@@ -128,9 +140,10 @@ class DriveCloudStore(
             setBody(ByteArrayContent(body, ContentType.parse("multipart/related; boundary=$boundary")))
         }
         response.ensureSuccess("create")
+        return writtenVersion(response)
     }
 
-    private suspend fun update(fileId: String, content: String) {
+    private suspend fun update(fileId: String, content: String): String? {
         val (media, mediaType) = encodeContent(content)
         val response = call(HttpMethod.Patch, "$apiBase/upload/drive/v3/files/$fileId") {
             url.parameters.append("uploadType", "media")
@@ -138,6 +151,7 @@ class DriveCloudStore(
             setBody(ByteArrayContent(media, mediaType))
         }
         response.ensureSuccess("update")
+        return writtenVersion(response)
     }
 
     /** [authorized], retrying transient failures (see the class doc). */

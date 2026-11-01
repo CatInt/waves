@@ -1,5 +1,6 @@
 package io.waves.sync
 
+import io.waves.currentTimeMillis
 import io.waves.data.LibraryRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -27,7 +28,8 @@ import kotlin.time.Duration.Companion.seconds
  * Decides *when* to sync. While signed in and [enabled]: once on sign-in/start/enabling, every [period], shortly
  * after local changes ([requestSync], debounced by [debounce] but never delayed more than [maxWait] after the
  * first pending request, so a steady stream of changes such as playback progress still syncs) and on app resume
- * ([onResume]). Does nothing while signed out or disabled (e.g. `UserSettings.syncEnabled` off).
+ * ([onResume]) unless a sync finished within [resumeQuiet]. Does nothing while signed out or disabled (e.g.
+ * `UserSettings.syncEnabled` off).
  *
  * Usage: create once per app process with an app-lifetime scope, call [start]; call [requestSync] after local
  * edits (or [watchLibrary] to do so automatically) and [onResume] when the app returns to the foreground.
@@ -36,11 +38,19 @@ class SyncScheduler(
     private val service: SyncService,
     private val auth: GoogleAuth,
     private val scope: CoroutineScope,
-    private val debounce: Duration = 10.seconds,
+    /** Longer than the player's progress saves (every 10 s), so playing doesn't count as quiet: a pause does. */
+    private val debounce: Duration = 15.seconds,
     private val period: Duration = 15.minutes,
     private val enabled: Flow<Boolean> = flowOf(true),
-    private val maxWait: Duration = 60.seconds,
+    /** While changes keep coming (progress, as an episode plays), a sync at least this often. */
+    private val maxWait: Duration = 5.minutes,
+    /** A resume this soon after a sync finished doesn't sync again: switching between apps needn't reach Drive each time. */
+    private val resumeQuiet: Duration = 2.minutes,
+    private val clock: () -> Long = ::currentTimeMillis,
 ) {
+    /** When the last sync that didn't fail finished. */
+    private var lastSyncedAt: Long? = null
+
     val status: StateFlow<SyncStatus> get() = service.status
 
     /** Pending local-change requests; conflated, so changes made during a sync trigger one more. */
@@ -75,7 +85,12 @@ class SyncScheduler(
                                 sync()
                             }
                         }
-                        launch { immediate.collect { sync() } }
+                        launch {
+                            immediate.collect {
+                                val last = lastSyncedAt
+                                if (last == null || clock() - last >= resumeQuiet.inWholeMilliseconds) sync()
+                            }
+                        }
                     }
                 }
         }
@@ -109,5 +124,8 @@ class SyncScheduler(
     }
 
     // SyncService serializes concurrent calls, so overlapping triggers simply queue up.
-    private suspend fun sync() = service.syncNow()
+    private suspend fun sync() {
+        service.syncNow()
+        if (service.status.value !is SyncStatus.Failed) lastSyncedAt = clock()
+    }
 }
