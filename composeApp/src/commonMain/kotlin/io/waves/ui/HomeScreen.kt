@@ -77,7 +77,9 @@ fun HomeScreen(
                 }
             }
         } else Column(Modifier.padding(padding).fillMaxSize()) {
-            val pinned = ui.shelf.isNotEmpty()
+            // Held at its height from the first frame, while the library is still being read, so its covers fill in
+            // where they'll stay instead of arriving and pushing the list down.
+            val pinned = !ui.loaded || ui.shelf.isNotEmpty()
             if (pinned) ShowShelf(ui.shelf, onOpenPodcast, Modifier.height(ShelfBandHeight).padding(top = 8.dp, bottom = 4.dp))
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 // Only the list moves with a pull; the shelf and its divider stay put above the gap.
@@ -118,7 +120,9 @@ fun HomeScreen(
                                 )
                             }
                         }
-                        if (ui.upNext.isEmpty()) {
+                        // Until the library has been read, nothing: rows ease in once it has, without a "loading" line
+                        // flashing first on every launch.
+                        if (ui.upNext.isEmpty() && (ui.loaded || ui.refreshing)) {
                             item(key = "status") {
                                 Text(
                                     when {
@@ -178,7 +182,8 @@ private fun ShowShelf(shows: List<Podcast>, onOpenPodcast: (Podcast) -> Unit, mo
             items(shows, key = { it.feedUrl }) { podcast ->
                 val anchor = rememberCoverAnchor(podcast.feedUrl, corner = 9.dp)
                 Box(
-                    Modifier.clip(RoundedCornerShape(10.dp)).clickable {
+                    // Covers arriving at start-up fade in where they'll stay; later ones slide over to make room.
+                    Modifier.animateItem().clip(RoundedCornerShape(10.dp)).clickable {
                         anchor.mark()
                         onOpenPodcast(podcast)
                     },
@@ -186,7 +191,7 @@ private fun ShowShelf(shows: List<Podcast>, onOpenPodcast: (Podcast) -> Unit, mo
                     Artwork(
                         podcast.artworkUrl, podcast.title, anchor.modifier, size = ShelfCoverSize, corner = 9.dp,
                         onLoaded = anchor.onLoaded, liveArchive = podcast.isLiveArchive,
-                        playlist = podcast.playlistId,
+                        playlist = podcast.playlistId, fadeInOnLoad = true,
                     )
                 }
             }

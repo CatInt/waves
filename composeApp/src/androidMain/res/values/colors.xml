@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The app's background (Material 3's, as WavesTheme uses it). -->
+    <color name="waves_background">#FFFEF7FF</color>
+</resources>

@@ -12,6 +12,13 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.Modifier
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.foundation.layout.Box
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.Animatable
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.lifecycleScope
 import io.waves.model.Podcast
@@ -31,11 +38,14 @@ class MainActivity : ComponentActivity() {
         val graph = (application as WavesApplication).graph
         setContent {
             val session by graph.session.collectAsState()
+            // Eases in over the window's background, the app's own colour, once the session is ready.
+            val shown = remember { Animatable(if (graph.session.value != null) 1f else 0f) }
             session?.let { s ->
+                LaunchedEffect(Unit) { shown.animateTo(1f, tween(AppFadeInMillis)) }
                 val navigator = s.state.navigator
                 // Hardware / gesture back pops the in-app stack; at a tab root the system handles it (exit).
                 BackHandler(enabled = navigator.canGoBack) { navigator.pop() }
-                App(s.deps, s.state)
+                Box(Modifier.graphicsLayer { alpha = shown.value }) { App(s.deps, s.state) }
             }
         }
         if (savedInstanceState == null) {
@@ -74,5 +84,6 @@ class MainActivity : ComponentActivity() {
 
     private companion object {
         const val KEY_ASKED_NOTIFICATIONS = "asked_post_notifications"
+        const val AppFadeInMillis = 220
     }
 }
