@@ -24,7 +24,7 @@ import kotlin.random.Random
 /**
  * [CloudStore] backed by the Google Drive v3 REST API, confined to the hidden `appDataFolder` space.
  *
- * The revision tag is the Drive file `version` (a monotonically increasing counter bumped on every change).
+ * The revision tag is the Drive file's id with its `version` (a counter bumped on every change of that file).
  * Drive has no conditional write, so [write] re-checks the file (existence for a create, version for an update)
  * right before uploading; the remaining window is tiny and a lost race only delays convergence (the losing
  * device's data stays local and is merged next sync).
@@ -51,7 +51,13 @@ class DriveCloudStore(
     private val json = Json { ignoreUnknownKeys = true }
 
     @Serializable
-    internal data class DriveFile(val id: String, val name: String? = null, val version: String? = null)
+    internal data class DriveFile(val id: String, val name: String? = null, val version: String? = null) {
+        /**
+         * The revision tag handed out: the file's id with its version, since versions count per file and two files
+         * of the same name (devices racing to create it) can be at the same version.
+         */
+        val revision: String get() = "$id@${version.orEmpty()}"
+    }
 
     @Serializable
     internal data class FileList(val files: List<DriveFile> = emptyList())
@@ -63,15 +69,15 @@ class DriveCloudStore(
         }
         if (response.status == HttpStatusCode.NotFound) return null
         response.ensureSuccess("download")
-        return decodeContent(response.body<ByteArray>()) to (file.version ?: "")
+        return decodeContent(response.body<ByteArray>()) to file.revision
     }
 
     /** The version an upload left the file at, from its response; null if that can't be read (the upload still stands). */
     private suspend fun writtenVersion(response: HttpResponse): String? =
-        runCatching { json.decodeFromString<DriveFile>(response.bodyAsText()).version }.getOrNull()
+        runCatching { json.decodeFromString<DriveFile>(response.bodyAsText()).takeIf { it.version != null }?.revision }.getOrNull()
 
     /** Just the file listing: no download. */
-    override suspend fun revision(name: String): String? = find(name)?.let { it.version ?: "" }
+    override suspend fun revision(name: String): String? = find(name)?.revision
 
     private fun decodeContent(bytes: ByteArray): String {
         if (!isGzip(bytes)) return bytes.decodeToString()
@@ -98,11 +104,11 @@ class DriveCloudStore(
         return when {
             ifRevision == null && existing != null ->
                 // Another device created the file since our read: merge with it instead of clobbering it.
-                throw ConflictException("Remote $name was created meanwhile (revision ${existing.version})")
+                throw ConflictException("Remote $name was created meanwhile (revision ${existing.revision})")
             ifRevision == null -> create(name, content)
             existing == null -> throw ConflictException("Expected revision $ifRevision of $name but it no longer exists")
-            existing.version != ifRevision ->
-                throw ConflictException("Remote $name is at revision ${existing.version}, expected $ifRevision")
+            existing.revision != ifRevision ->
+                throw ConflictException("Remote $name is at revision ${existing.revision}, expected $ifRevision")
             else -> update(existing.id, content)
         }
     }
