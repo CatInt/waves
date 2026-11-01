@@ -63,11 +63,11 @@ class ChartLinesTest {
 
     @Test
     fun aGenresEpisodeRowsGoBestFirst() {
-        // Show 1's episode ranks below show 3's; both fit, the better one in the first episode row.
+        // Show 1's episode ranks below show 3's; both fit, the better one above the covers, the other below.
         val shows = (1L..5L).map { show(it, "News", it.toInt()) }
         val episodes = listOf(episode(3, 30), episode(1, 10))
         assertEquals(
-            listOf("== News", "[2,4]", "e30 #1 today", "e10 #2 today"),
+            listOf("== News", "e30 #1 today", "[2,4]", "e10 #2 today"),
             describe(chartLines(shows, episodes, across = 2)),
         )
     }
