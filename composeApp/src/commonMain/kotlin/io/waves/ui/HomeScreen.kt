@@ -206,6 +206,9 @@ private const val RowMoveMillis = 400L
  */
 internal val ShelfBandHeight = 8.dp + ShelfCoverSize + 8.dp + 4.dp
 
+/** How far above the divider a pinned header's label (Discover's list, History's day) is lifted, alike on both. */
+internal val BandLabelLift = 6.dp
+
 internal val UpNextReason.label: String?
     get() = when (this) {
         UpNextReason.ContinueListening -> "Continue"
