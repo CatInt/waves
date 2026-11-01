@@ -99,7 +99,7 @@ fun DiscoverScreen(
                 SectionLabel(
                     listHeader(ui, scrolledGenre),
                     // Drawn a little higher, off the divider, without moving the list.
-                    Modifier.contentInset().padding(start = ScreenGutter, end = ScreenGutter, bottom = 4.dp).offset(y = (-6).dp),
+                    Modifier.contentInset().padding(start = ScreenGutter, end = ScreenGutter, bottom = 4.dp).offset(y = -BandLabelLift),
                 )
             }
             Box(Modifier.weight(1f).fillMaxWidth()) {

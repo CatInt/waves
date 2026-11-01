@@ -84,10 +84,15 @@ fun HistoryScreen(
             }
             // Pinned like Home's shelf, its divider on the same line.
             Column(Modifier.height(ShelfBandHeight)) {
-                HistorySummary(ui.listenedThisWeekMs, downloads, Modifier.weight(1f))
+                // Its top on the line Home's shelf covers and Discover's search field start on.
+                Box(Modifier.fillMaxWidth().weight(1f).padding(top = 8.dp), contentAlignment = Alignment.TopCenter) {
+                    HistorySummary(ui.listenedThisWeekMs, downloads)
+                }
+                // Where Discover names its list, so the label holds its place when swiping between the tabs.
                 SectionLabel(
                     topDay?.let { dayLabel(it, today) }.orEmpty(),
-                    Modifier.contentInset().padding(start = ScreenGutter, end = ScreenGutter, bottom = 4.dp),
+                    Modifier.contentInset().padding(start = ScreenGutter, end = ScreenGutter, bottom = 4.dp)
+                        .offset(y = -BandLabelLift),
                 )
             }
             Box(Modifier.weight(1f).fillMaxWidth()) {
