@@ -63,6 +63,17 @@ class FakeCloudStore : CloudStore {
         return files[name]?.let { it.first to it.second.toString() }
     }
 
+    var revisions = 0
+
+    override suspend fun revision(name: String): String? {
+        failWith?.let { throw it }
+        revisions++
+        return files[name]?.second?.toString()
+    }
+
+    /** Whether writes report the revision they made, as Drive's do. */
+    var reportsRevision = true
+
     override suspend fun write(name: String, content: String, ifRevision: String?) {
         failWith?.let { throw it }
         beforeWrite(this)
@@ -71,6 +82,11 @@ class FakeCloudStore : CloudStore {
         if (current?.second?.toString() != ifRevision) throw ConflictException("conflict")
         writes++
         files[name] = content to ((current?.second ?: 0) + 1)
+    }
+
+    override suspend fun writeForRevision(name: String, content: String, ifRevision: String?): String? {
+        write(name, content, ifRevision)
+        return files.getValue(name).second.toString().takeIf { reportsRevision }
     }
 }
 

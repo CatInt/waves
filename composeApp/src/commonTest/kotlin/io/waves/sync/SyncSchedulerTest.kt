@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -22,7 +23,7 @@ class SyncSchedulerTest {
     }
 
     private fun TestScope.scheduler(service: SyncService, auth: GoogleAuth) =
-        SyncScheduler(service, auth, backgroundScope, debounce = 10.seconds, period = 15.minutes)
+        SyncScheduler(service, auth, backgroundScope, debounce = 10.seconds, period = 15.minutes, clock = { currentTime })
 
     @Test
     fun syncsOnStartAndPeriodically() = runTest {
@@ -78,6 +79,23 @@ class SyncSchedulerTest {
         val s = scheduler(service, FakeAuth())
         s.start()
         runCurrent()
+        advanceTimeBy(3.minutes)
+        s.onResume()
+        runCurrent()
+        assertEquals(2, service.calls)
+    }
+
+    @Test
+    fun resumeRightAfterASyncDoesntSyncAgain() = runTest {
+        val service = CountingService()
+        val s = scheduler(service, FakeAuth())
+        s.start()
+        runCurrent()
+        advanceTimeBy(1.minutes)
+        s.onResume()
+        runCurrent()
+        assertEquals(1, service.calls, "synced a minute ago")
+        advanceTimeBy(2.minutes)
         s.onResume()
         runCurrent()
         assertEquals(2, service.calls)

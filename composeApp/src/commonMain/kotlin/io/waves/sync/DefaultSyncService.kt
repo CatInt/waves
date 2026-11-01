@@ -32,6 +32,14 @@ class DefaultSyncService(
 
     private val mutex = Mutex()
 
+    /**
+     * What the last sync left both sides at: the remote file's revision (null when unknown, as after a write to a store
+     * that doesn't say what revision it made) and the library as merged. While the library still
+     * matches and the remote is still at that revision, a sync has nothing to do and stops after looking that up.
+     */
+    private var lastRevision: String? = null
+    private var lastMerged: SyncState? = null
+
     override suspend fun syncNow() = mutex.withLock {
         _status.value = SyncStatus.Syncing
         _status.value = try {
@@ -46,18 +54,23 @@ class DefaultSyncService(
     }
 
     private suspend fun runSync() {
-        repeat(maxAttempts) {
+        repeat(maxAttempts) { attempt ->
+            val local = library.exportSyncState()
+            val known = lastRevision
+            if (attempt == 0 && known != null && SyncMerge.normalize(local) == lastMerged && cloud.revision(fileName) == known) {
+                return
+            }
             val remote = cloud.read(fileName)
             // Throws (failing the sync before anything is written or imported) for unreadable files and for
             // files from a newer app version: see SyncFormat for the compatibility rules.
             val decoded = remote?.let { SyncFormat.decode(it.first) }
             val remoteState = decoded?.state
-            val local = library.exportSyncState()
             val merged = if (remoteState == null) SyncMerge.normalize(local) else SyncMerge.merge(local, remoteState)
 
+            var revision = remote?.second
             if (remote == null || merged != remoteState) {
                 try {
-                    cloud.write(fileName, SyncFormat.encode(merged, decoded?.extras.orEmpty()), remote?.second)
+                    revision = cloud.writeForRevision(fileName, SyncFormat.encode(merged, decoded?.extras.orEmpty()), remote?.second)
                 } catch (e: ConflictException) {
                     return@repeat // someone else wrote meanwhile: start over with their version
                 }
@@ -73,6 +86,8 @@ class DefaultSyncService(
             ) {
                 library.importSyncState(delta)
             }
+            lastMerged = merged
+            lastRevision = revision
             return
         }
         throw ConflictException("Sync kept conflicting with another device after $maxAttempts attempts")
