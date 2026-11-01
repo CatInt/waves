@@ -448,6 +448,18 @@ class HistoryStateTest {
     }
 
     @Test
+    fun sinceReadsShort() {
+        val now = 1_761_350_400_000L
+        fun ago(ms: Long) = formatSince(now - ms, now, TimeZone.UTC)
+        assertEquals("Just now", ago(30_000))
+        assertEquals("5 min ago", ago(5 * 60_000))
+        assertEquals("2 h ago", ago(2 * 3_600_000))
+        assertEquals("Yesterday", ago(30 * 3_600_000))
+        assertEquals("3 days ago", ago(3 * 86_400_000L))
+        assertEquals(formatShortDate(now - 15 * 86_400_000L, TimeZone.UTC), ago(15 * 86_400_000L))
+    }
+
+    @Test
     fun dayLabels() {
         val today = LocalDate(2026, 10, 19)
         assertEquals("Today", dayLabel(today, today))

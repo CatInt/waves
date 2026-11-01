@@ -24,6 +24,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.outlined.CloudDone
+import androidx.compose.material.icons.outlined.CloudSync
+import androidx.compose.material.icons.outlined.CloudOff
+import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -31,6 +35,14 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import kotlinx.coroutines.delay
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.runtime.collectAsState
@@ -48,6 +60,7 @@ import io.waves.currentTimeMillis
 import io.waves.platformName
 import io.waves.model.HistoryEntry
 import io.waves.sync.AuthState
+import io.waves.sync.SyncStatus
 import kotlinx.datetime.DatePeriod
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
@@ -66,6 +79,8 @@ fun HistoryScreen(
 ) {
     val ui by state.state.collectAsState()
     val syncUi = sync?.let { it.state.collectAsState().value }
+    // Signed in with sync on: the list syncs when pulled, and the header tells when it last did (else that sync is off).
+    val syncs = sync != null && syncUi != null && syncUi.auth is AuthState.SignedIn && syncUi.settings.syncEnabled
     Scaffold(
         topBar = { WavesTopBar("History", icon = Tab.History.icon) },
         contentWindowInsets = WindowInsets(0),
@@ -91,22 +106,26 @@ fun HistoryScreen(
                 }
                 // A narrowed or widened list starts over from its top.
                 LaunchedEffect(ui.downloadedOnly) { listState.scrollToItem(0) }
-                // Where Discover names its list, so the label holds its place when swiping between the tabs.
-                SectionLabel(
-                    topDay?.let { dayLabel(it, today) }.orEmpty(),
-                    Modifier.contentInset().padding(start = ScreenGutter, end = ScreenGutter, bottom = 4.dp)
+                // Where Discover names its list, so the label holds its place when swiping between the tabs; at the
+                // line's end, when the library last synced.
+                Row(
+                    Modifier.fillMaxWidth().contentInset().padding(start = ScreenGutter, end = ScreenGutter, bottom = 4.dp)
                         .offset(y = -BandLabelLift),
-                )
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    SectionLabel(topDay?.let { dayLabel(it, today) }.orEmpty(), Modifier.weight(1f))
+                    if (syncUi != null) SyncStamp(if (syncs) syncUi.sync else null, ui.now)
+                }
             }
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 val pull = rememberPullProgress()
                 // Rows scrolling up end at the divider's line; on the list, so a pull's waves come down through it.
                 val list = Modifier.clip(BelowListDivider)
-                if (sync != null && syncUi != null && syncUi.auth is AuthState.SignedIn && syncUi.settings.syncEnabled) {
+                if (syncs) {
                     WavesPullToRefreshBox(
                         // Only syncs asked for here or in Settings spin; background ones run often while playing.
-                        isRefreshing = syncUi.busy,
-                        onRefresh = sync::syncNow,
+                        isRefreshing = syncUi!!.busy,
+                        onRefresh = sync!!::syncNow,
                         modifier = Modifier.fillMaxSize(),
                         gapTop = ListDividerHeight,
                         progress = pull,
@@ -265,7 +284,7 @@ private fun SummaryTile(
         if (selected) colors.onPrimaryContainer.copy(alpha = 0.8f) else colors.onSurfaceVariant, label = "tile caption",
     )
     val body: @Composable () -> Unit = {
-        Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(1.dp)) {
             Text(value, style = MaterialTheme.typography.titleLarge, maxLines = 1)
             Text(label, style = MaterialTheme.typography.bodySmall, color = caption, maxLines = 1)
         }
@@ -275,6 +294,81 @@ private fun SummaryTile(
         Surface(selected, onClick, modifier, shape = shape, color = container, contentColor = content, content = body)
     } else {
         Surface(modifier, shape = shape, color = container, contentColor = content, content = body)
+    }
+}
+
+/**
+ * When the library last synced ([sync]; null while sync is off): a cloud icon that's always there, and words beside it
+ * shown only for a few seconds after it changes, and for as long as a sync runs.
+ */
+@Composable
+private fun SyncStamp(sync: SyncStatus?, now: Long) {
+    var shown by remember { mutableStateOf(false) }
+    var first by remember { mutableStateOf(true) }
+    LaunchedEffect(sync) {
+        // Not on first showing History: only an update brings it up.
+        if (first) {
+            first = false
+            return@LaunchedEffect
+        }
+        shown = true
+        if (sync == SyncStatus.Syncing) return@LaunchedEffect
+        delay(SyncStampMillis)
+        shown = false
+    }
+    // Lighter than the label's text: an icon's strokes read heavier than letters of the same colour.
+    val muted = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        // Eases in and, slower still, out, so it comes and goes without catching the eye.
+        AnimatedVisibility(shown, enter = fadeIn(tween(500)), exit = fadeOut(tween(900))) {
+            SectionLabel(if (sync == null) "Sync off" else syncedLabel(sync, now))
+        }
+        // Its icon stays, so the state of sync is always plain to see; the words come with each update.
+        Crossfade(cloudIcon(sync), label = "sync icon") { icon ->
+            Icon(
+                icon,
+                contentDescription = if (sync == null) "Sync off" else syncedLabel(sync, now),
+                modifier = Modifier.size(17.dp),
+                tint = if (sync is SyncStatus.Failed) MaterialTheme.colorScheme.error else muted,
+            )
+        }
+    }
+}
+
+private const val SyncStampMillis = 4_000L
+
+private fun cloudIcon(sync: SyncStatus?) = when (sync) {
+    null -> Icons.Outlined.CloudOff
+    SyncStatus.Syncing -> Icons.Outlined.CloudSync
+    is SyncStatus.Done -> Icons.Outlined.CloudDone
+    // Failed (tinted red) or not synced yet.
+    else -> Icons.Outlined.Cloud
+}
+
+/** When the library last synced, as of [now] (History's state ticks over with the minutes); else what it's doing instead. */
+private fun syncedLabel(sync: SyncStatus, now: Long): String = when (sync) {
+    SyncStatus.Idle -> "Not synced yet"
+    SyncStatus.Syncing -> "Syncing…"
+    is SyncStatus.Failed -> "Sync failed"
+    is SyncStatus.Done -> "Synced ${formatSince(sync.atEpochMs, now).replaceFirstChar { it.lowercase() }}"
+}
+
+/** "Just now", "5 min ago", "2 h ago", "Yesterday", "3 days ago"; older as [formatShortDate]. Short, for a label. */
+internal fun formatSince(
+    epochMs: Long,
+    now: Long = currentTimeMillis(),
+    timeZone: TimeZone = TimeZone.currentSystemDefault(),
+): String {
+    val minutes = (now - epochMs) / 60_000
+    val hours = minutes / 60
+    val days = hours / 24
+    return when {
+        minutes < 1 -> "Just now"
+        minutes < 60 -> "$minutes min ago"
+        hours < 24 -> "$hours h ago"
+        days == 1L -> "Yesterday"
+        days < 7 -> "$days days ago"
+        else -> formatShortDate(epochMs, timeZone)
     }
 }
 

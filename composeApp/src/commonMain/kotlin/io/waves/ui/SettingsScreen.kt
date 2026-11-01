@@ -111,22 +111,13 @@ private fun SyncSettings(state: SettingsState, ui: SettingsUiState) {
                     trailing = { TextButton(onClick = state::signOut, enabled = !ui.busy) { Text("Sign out") } },
                 )
                 RowDivider()
+                // Syncs run by themselves (and when History is pulled); the toggle tells how the last one went.
                 ToggleRow(
                     icon = Icons.Default.Sync,
                     title = "Sync with Google Drive",
-                    subtitle = if (ui.settings.syncEnabled) null else "This device neither uploads nor downloads changes.",
+                    subtitle = if (ui.settings.syncEnabled) syncStatusText(ui) else "This device neither uploads nor downloads changes.",
                     checked = ui.settings.syncEnabled,
                     onChange = state::setSyncEnabled,
-                )
-                RowDivider()
-                SettingsRow(
-                    icon = null,
-                    title = "Sync now",
-                    subtitle = syncStatusText(ui),
-                    subtitleColor = if (ui.sync is SyncStatus.Failed) MaterialTheme.colorScheme.error else Color.Unspecified,
-                    onClick = state::syncNow,
-                    enabled = ui.canSyncNow,
-                    trailing = { if (ui.busy || ui.sync == SyncStatus.Syncing) SmallSpinner() },
                 )
             }
         }

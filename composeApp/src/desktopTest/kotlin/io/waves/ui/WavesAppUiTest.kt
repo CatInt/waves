@@ -17,9 +17,7 @@ import androidx.compose.ui.test.swipeDown
 import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.isToggleable
-import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.isNotEnabled
 import androidx.compose.ui.test.isOn
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
@@ -125,11 +123,10 @@ class WavesAppUiTest {
         val autoDelete = isToggleable() and hasText("Delete downloads", substring = true)
         waitFor("auto-delete on") { onAllNodes(autoDelete and isOn()).fetchSemanticsNodes().isNotEmpty() }
         assertTrue(deps.settings.settings.value.autoDeleteDownloads)
-        // Turning sync off disables "Sync now".
-        onNodeWithText("Sync now").performScrollTo().assertIsEnabled()
+        // Turning sync off says so. (History's header says it too, briefly; the test clock runs past that at once.)
         onNodeWithText("Sync with Google Drive").performScrollTo()
             .performSemanticsAction(SemanticsActions.OnClick)
-        waitFor("Sync now disabled") { onAllNodes(hasText("Sync now") and isNotEnabled()).fetchSemanticsNodes().isNotEmpty() }
+        waitForText("This device neither uploads nor downloads changes.")
         assertFalse(deps.settings.settings.value.syncEnabled)
 
         onNode(navTab("Discover")).performClick()
