@@ -39,6 +39,8 @@ data class HistoryUiState(
     val downloaded: Int = 0,
     /** Whether the list is narrowed to the entries with a download here. */
     val downloadedOnly: Boolean = false,
+    /** The clock when this was worked out; ticks over with the minutes, for ages shown beside the list. */
+    val now: Long = currentTimeMillis(),
 )
 
 /**
@@ -90,6 +92,7 @@ class HistoryState(
                 listenedThisWeekMs = thisWeek(all, now, timeZone),
                 downloaded = downloaded.size,
                 downloadedOnly = only,
+                now = now,
             )
         }.stateIn(scope, SharingStarted.Eagerly, HistoryUiState())
 
