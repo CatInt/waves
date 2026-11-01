@@ -74,10 +74,12 @@ class YtDlpAndroidSource(
 internal const val YTDLP_LOG_TAG = "YtDlp"
 
 /**
- * AAC (M4A) first, then any audio. yt-dlp's `-f` fallbacks are left to right.
- * Watch-URL downloads are stored as `.m4a` ([io.waves.download.audioExtension]).
+ * AAC (M4A) first, then any audio, each as a plain file over HTTPS before an HLS stream (a playlist of pieces, which
+ * plays but can't be downloaded as one file); HLS only when it's all a video has. yt-dlp's `-f` fallbacks are left
+ * to right. Watch-URL downloads are stored as `.m4a` ([io.waves.download.audioExtension]).
  */
-internal const val YTDLP_AUDIO_FORMAT = "bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]/bestaudio"
+internal const val YTDLP_AUDIO_FORMAT =
+    "bestaudio[ext=m4a][protocol^=http]/bestaudio[acodec^=mp4a][protocol^=http]/bestaudio[protocol^=http]/bestaudio"
 
 /** Arguments passed to yt-dlp for one watch URL. The library adds its own flags (`--no-cache-dir`, a JS runtime) later. */
 internal fun ytdlpAudioArguments(videoId: String): List<String> = buildList {
