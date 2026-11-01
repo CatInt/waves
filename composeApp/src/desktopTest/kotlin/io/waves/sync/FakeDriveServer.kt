@@ -221,15 +221,17 @@ class FakeDriveServer : AutoCloseable {
     private fun updateMedia(ex: HttpExchange, id: String, q: Map<String, String>, body: ByteArray) {
         if (q["uploadType"] != "media") return error(ex, 400, "invalid", "Invalid Value: uploadType (only media emulated for updates)")
         if (body.size > MULTIPART_LIMIT) oversizedUploads++
-        val file = synchronized(lock) {
+        // The reply describes the file as this update left it, read under the lock: a concurrent update must not show
+        // through, or two writers would each be told the other's version (Drive answers each with its own).
+        val reply = synchronized(lock) {
             files.firstOrNull { it.id == id && !it.trashed }?.also {
                 it.content = body
                 it.mimeType = ex.requestHeaders.getFirst("Content-Type")?.substringBefore(';')?.trim() ?: it.mimeType
                 it.version += Random.nextLong(1, 4)
                 it.modifiedTime = tick()
-            }
+            }?.let { fileJson(it, fieldsList(q["fields"])).toString() }
         } ?: return error(ex, 404, "notFound", "File not found: $id.")
-        json(ex, 200, fileJson(file, fieldsList(q["fields"])).toString())
+        json(ex, 200, reply)
     }
 
     // ---- helpers ----
