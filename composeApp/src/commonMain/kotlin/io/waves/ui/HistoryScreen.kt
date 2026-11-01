@@ -31,6 +31,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -44,7 +46,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.waves.currentTimeMillis
 import io.waves.platformName
-import io.waves.download.DownloadStatus
 import io.waves.model.HistoryEntry
 import io.waves.sync.AuthState
 import kotlinx.datetime.DatePeriod
@@ -86,8 +87,10 @@ fun HistoryScreen(
             Column(Modifier.height(ShelfBandHeight)) {
                 // Its top on the line Home's shelf covers and Discover's search field start on.
                 Box(Modifier.fillMaxWidth().weight(1f).padding(top = 8.dp), contentAlignment = Alignment.TopCenter) {
-                    HistorySummary(ui.listenedThisWeekMs, downloads)
+                    HistorySummary(ui, showDownloads = downloads != null, onToggleDownloaded = state::toggleDownloadedOnly)
                 }
+                // A narrowed or widened list starts over from its top.
+                LaunchedEffect(ui.downloadedOnly) { listState.scrollToItem(0) }
                 // Where Discover names its list, so the label holds its place when swiping between the tabs.
                 SectionLabel(
                     topDay?.let { dayLabel(it, today) }.orEmpty(),
@@ -139,7 +142,10 @@ private fun HistoryList(
         if (ui.loaded && ui.days.isEmpty()) {
             item(key = "empty") {
                 Box(Modifier.fillParentMaxSize().padding(ScreenGutter), contentAlignment = Alignment.Center) {
-                    Text("Nothing played yet", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        if (ui.downloadedOnly) "No downloaded episodes played yet" else "Nothing played yet",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
@@ -215,29 +221,60 @@ private fun dayAtTop(ui: HistoryUiState, index: Int): LocalDate? {
     return ui.days.lastOrNull()?.date
 }
 
-/** This week's listening time (every device) and how many episodes are downloaded here, side by side. */
+/**
+ * This week's listening time (every device) and how many episodes are downloaded here, side by side. The downloads
+ * tile is a toggle: on, the list keeps only the entries with a download here.
+ */
 @Composable
-private fun HistorySummary(listenedMs: Long, downloads: DownloadsState?, modifier: Modifier = Modifier) {
-    val downloaded = downloads?.let { d ->
-        d.state.collectAsState().value.items.count { it.status == DownloadStatus.Done }
-    }
+private fun HistorySummary(
+    ui: HistoryUiState,
+    showDownloads: Boolean,
+    onToggleDownloaded: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Row(
         modifier.fillMaxWidth().contentInset().padding(horizontal = ScreenGutter),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        SummaryTile(formatListened(listenedMs), "listened this week", Modifier.weight(1f))
-        if (downloaded != null) SummaryTile("$downloaded ep", "downloaded", Modifier.weight(1f))
+        SummaryTile(formatListened(ui.listenedThisWeekMs), "listened this week", Modifier.weight(1f))
+        if (showDownloads) {
+            SummaryTile(
+                "${ui.downloaded} ep", "downloaded", Modifier.weight(1f),
+                selected = ui.downloadedOnly, onClick = onToggleDownloaded,
+            )
+        }
     }
 }
 
+/** A figure over its caption; with [onClick], a toggle that fills in while [selected]. */
 @Composable
-private fun SummaryTile(value: String, label: String, modifier: Modifier = Modifier) {
-    Surface(modifier, shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)) {
+private fun SummaryTile(
+    value: String,
+    label: String,
+    modifier: Modifier = Modifier,
+    selected: Boolean = false,
+    onClick: (() -> Unit)? = null,
+) {
+    val colors = MaterialTheme.colorScheme
+    val container by animateColorAsState(
+        if (selected) colors.primaryContainer else colors.onSurface.copy(alpha = 0.06f), label = "tile",
+    )
+    val content by animateColorAsState(if (selected) colors.onPrimaryContainer else colors.onSurface, label = "tile text")
+    val caption by animateColorAsState(
+        if (selected) colors.onPrimaryContainer.copy(alpha = 0.8f) else colors.onSurfaceVariant, label = "tile caption",
+    )
+    val body: @Composable () -> Unit = {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(value, style = MaterialTheme.typography.titleLarge, maxLines = 1)
-            Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            Text(label, style = MaterialTheme.typography.bodySmall, color = caption, maxLines = 1)
         }
+    }
+    val shape = RoundedCornerShape(16.dp)
+    if (onClick != null) {
+        Surface(selected, onClick, modifier, shape = shape, color = container, contentColor = content, content = body)
+    } else {
+        Surface(modifier, shape = shape, color = container, contentColor = content, content = body)
     }
 }
 

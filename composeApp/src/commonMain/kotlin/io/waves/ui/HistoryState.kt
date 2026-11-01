@@ -1,6 +1,13 @@
 package io.waves.ui
 
 import io.waves.currentTimeMillis
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.Flow
+import io.waves.model.EpisodeId
+import io.waves.download.DownloadStatus
+import io.waves.download.DownloadInfo
 import io.waves.data.LibraryRepository
 import io.waves.model.HistoryEntry
 import io.waves.model.PlaybackProgress
@@ -23,24 +30,48 @@ import kotlinx.datetime.toLocalDateTime
 data class HistoryDay(val date: LocalDate, val entries: List<HistoryEntry>)
 
 data class HistoryUiState(
+    /** The history, or with [downloadedOnly] just the entries with a download here. */
     val days: List<HistoryDay> = emptyList(),
     val loaded: Boolean = false,
     /** Listening time this week (since Monday), on every device. */
     val listenedThisWeekMs: Long = 0,
+    /** How many episodes are downloaded on this device. */
+    val downloaded: Int = 0,
+    /** Whether the list is narrowed to the entries with a download here. */
+    val downloadedOnly: Boolean = false,
 )
 
 /**
  * Listening history from all devices, newest first, grouped by local calendar day. Each episode is listed once, at
  * its latest session; the library keeps every session (sync and show affinity count them). Also this week's listening
  * time, counted afresh every minute so it starts over on Monday: measured where a device has measured it
- * ([LibraryRepository.listening]), else estimated from the history ([estimatedListening]).
+ * ([LibraryRepository.listening]), else estimated from the history ([estimatedListening]). The list can be narrowed
+ * to the episodes with a download here ([toggleDownloadedOnly]).
  */
 class HistoryState(
     library: LibraryRepository,
     scope: CoroutineScope,
     private val timeZone: TimeZone = TimeZone.currentSystemDefault(),
     private val clock: () -> Long = ::currentTimeMillis,
+    /** This device's downloads, for the count and the downloaded-only list. */
+    downloads: Flow<List<DownloadInfo>> = flowOf(emptyList()),
 ) {
+    private val downloadedOnly = MutableStateFlow(false)
+
+    /** Narrows the list to the entries with a download here, or widens it again. */
+    fun toggleDownloadedOnly() {
+        downloadedOnly.update { !it }
+    }
+
+    /** Widens the list again: the narrowing is for a look, not kept once History is left. */
+    fun showAll() {
+        downloadedOnly.value = false
+    }
+
+    private val downloadFilter = combine(downloads, downloadedOnly) { list, only ->
+        list.filter { it.status == DownloadStatus.Done }.map { it.episodeId }.toSet() to only
+    }
+
     private val minutes = flow {
         while (true) {
             emit(Unit)
@@ -49,11 +80,22 @@ class HistoryState(
     }
 
     val state: StateFlow<HistoryUiState> =
-        combine(library.history, library.listening, library.allProgress, minutes) { history, listening, progress, _ ->
+        combine(library.history, library.listening, library.allProgress, minutes, downloadFilter) { history, listening, progress, _, (downloaded, only) ->
             val now = clock()
             val all = withEstimates(listening, estimatedListening(history, progress, now, timeZone))
-            HistoryUiState(groupByDay(history, timeZone), loaded = true, listenedThisWeekMs = thisWeek(all, now, timeZone))
+            val days = groupByDay(history, timeZone)
+            HistoryUiState(
+                days = if (only) days.onlyDownloaded(downloaded) else days,
+                loaded = true,
+                listenedThisWeekMs = thisWeek(all, now, timeZone),
+                downloaded = downloaded.size,
+                downloadedOnly = only,
+            )
         }.stateIn(scope, SharingStarted.Eagerly, HistoryUiState())
+
+    private fun List<HistoryDay>.onlyDownloaded(ids: Set<EpisodeId>): List<HistoryDay> = mapNotNull { day ->
+        day.entries.filter { it.episodeId in ids }.takeIf { it.isNotEmpty() }?.let { HistoryDay(day.date, it) }
+    }
 
     companion object {
         fun groupByDay(entries: List<HistoryEntry>, timeZone: TimeZone): List<HistoryDay> =
