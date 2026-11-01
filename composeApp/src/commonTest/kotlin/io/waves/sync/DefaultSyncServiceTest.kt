@@ -78,6 +78,74 @@ class DefaultSyncServiceTest {
     }
 
     @Test
+    fun aSyncWithNothingNewOnEitherSideOnlyLooksUpTheRevision() = runTest {
+        val state = SyncState(subscriptions = listOf(sub("a")))
+        val cloud = FakeCloudStore()
+        cloud.files[name] = json.encodeToString(SyncState.serializer(), state) to 1
+        val library = FakeLibrary(state)
+        val service = DefaultSyncService(library, cloud, clock = { 7 })
+
+        service.syncNow()
+        assertEquals(1, cloud.reads)
+        service.syncNow()
+
+        assertEquals(1, cloud.reads, "no download the second time")
+        assertEquals(1, cloud.revisions)
+        assertEquals(0, cloud.writes)
+        assertEquals(SyncStatus.Done(7), service.status.value)
+    }
+
+    @Test
+    fun afterItsOwnWriteTheNextQuietSyncOnlyLooksUpTheRevision() = runTest {
+        val library = FakeLibrary(SyncState(subscriptions = listOf(sub("a"))))
+        val cloud = FakeCloudStore()
+        val service = DefaultSyncService(library, cloud)
+
+        service.syncNow() // uploads; the write says which revision it made
+        service.syncNow()
+
+        assertEquals(1, cloud.writes)
+        assertEquals(1, cloud.reads, "no download after its own upload")
+        assertEquals(1, cloud.revisions)
+    }
+
+    @Test
+    fun aStoreThatCantTellItsRevisionGetsReadOnceMore() = runTest {
+        val library = FakeLibrary(SyncState(subscriptions = listOf(sub("a"))))
+        val cloud = FakeCloudStore().apply { reportsRevision = false }
+        val service = DefaultSyncService(library, cloud)
+
+        service.syncNow()
+        service.syncNow() // revision unknown: reads it in full, learning it
+        service.syncNow()
+
+        assertEquals(2, cloud.reads)
+        assertEquals(1, cloud.revisions)
+    }
+
+    @Test
+    fun aChangeOnEitherSideStillSyncsInFull() = runTest {
+        val state = SyncState(subscriptions = listOf(sub("a")))
+        val cloud = FakeCloudStore()
+        cloud.files[name] = json.encodeToString(SyncState.serializer(), state) to 1
+        val library = FakeLibrary(state)
+        val service = DefaultSyncService(library, cloud)
+        service.syncNow()
+
+        // Another device writes: the revision moves on, so this one downloads and imports it.
+        cloud.files[name] = json.encodeToString(SyncState.serializer(), state.copy(subscriptions = listOf(sub("a"), sub("b")))) to 2
+        service.syncNow()
+        assertEquals(2, cloud.reads)
+        assertEquals(listOf(sub("a"), sub("b")), library.stateFlow.value.subscriptions)
+
+        // A local change goes up even though the remote hasn't moved.
+        library.saveProgress(prog("e", 5, 9))
+        service.syncNow()
+        assertEquals(3, cloud.reads)
+        assertEquals(listOf(prog("e", 5, 9)), remoteState(cloud).progress)
+    }
+
+    @Test
     fun retriesOnConflictAndIncludesOtherDevicesWrite() = runTest {
         val cloud = FakeCloudStore()
         cloud.files[name] = json.encodeToString(SyncState.serializer(), SyncState()) to 1

@@ -59,6 +59,9 @@ data class SubscriptionRecord(
 interface CloudStore {
     /** Returns file content and an opaque revision tag, or null if absent. */
     suspend fun read(name: String): Pair<String, String>?
+
+    /** The file's revision tag as [read] would give it, or null if absent; stores override it to skip the content. */
+    suspend fun revision(name: String): String? = read(name)?.second
     /**
      * Writes content, as a compare-and-set on the revision from [read]:
      * - [ifRevision] non-null: replaces the file only if it is still at that revision.
@@ -66,6 +69,15 @@ interface CloudStore {
      * Otherwise throws [ConflictException]; callers re-read, merge and retry.
      */
     suspend fun write(name: String, content: String, ifRevision: String?)
+
+    /**
+     * [write], then the revision it left the file at, or null when the store can't tell without asking again; stores
+     * that learn it from the write itself override this, sparing the next sync a download.
+     */
+    suspend fun writeForRevision(name: String, content: String, ifRevision: String?): String? {
+        write(name, content, ifRevision)
+        return null
+    }
 }
 
 class ConflictException(message: String) : Exception(message)
