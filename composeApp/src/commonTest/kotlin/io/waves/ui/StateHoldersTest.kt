@@ -1,6 +1,8 @@
 package io.waves.ui
 
 import io.waves.data.UserSettings
+import io.waves.download.DownloadStatus
+import io.waves.download.DownloadInfo
 import io.waves.data.normalizeRegion
 import io.waves.feed.Feed
 import io.waves.model.EpisodeId
@@ -423,6 +425,26 @@ class HistoryStateTest {
         settle()
         assertTrue(s.state.value.loaded)
         assertEquals(1, s.state.value.days.single().entries.size)
+    }
+
+    @Test
+    fun downloadedOnlyKeepsTheEntriesWithADownloadHere() = runTest {
+        val library = InMemoryLibraryRepository()
+        val kept = HistoryEntry(EpisodeId("f", "dl"), "D", "P", 6, "d")
+        library.addHistory(entry(5))
+        library.addHistory(kept)
+        val downloads = MutableStateFlow(listOf(DownloadInfo(kept.episodeId, DownloadStatus.Done, 1, 1, "/f", null)))
+        val s = HistoryState(library, backgroundScope, TimeZone.UTC, downloads = downloads)
+        settle()
+        assertEquals(1, s.state.value.downloaded)
+        assertEquals(2, s.state.value.days.single().entries.size)
+        s.toggleDownloadedOnly()
+        settle()
+        assertTrue(s.state.value.downloadedOnly)
+        assertEquals(listOf(kept), s.state.value.days.single().entries)
+        s.toggleDownloadedOnly()
+        settle()
+        assertEquals(2, s.state.value.days.single().entries.size)
     }
 
     @Test
