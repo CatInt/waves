@@ -37,6 +37,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.lerp
 import coil3.compose.AsyncImage
+import androidx.compose.material3.MaterialTheme
+import kotlinx.coroutines.launch
+import coil3.decode.DataSource
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.Animatable
 import coil3.compose.LocalPlatformContext
 import coil3.memory.MemoryCache
 import coil3.request.ImageRequest
@@ -96,23 +101,37 @@ fun Artwork(
      * its corner as it collapses into the bar's chip, which clips it, but scales it on its flight between screens.
      */
     ribbonFor: (() -> Dp)? = null,
+    /**
+     * Loading from disk or the network, the cover fades in over a faint tile instead of popping in over the coloured
+     * initials, which show only if it can't be loaded. One already in memory shows at once.
+     */
+    fadeInOnLoad: Boolean = false,
 ) {
     val sized = if (size != null) modifier.size(size) else modifier
+    var failed by remember(url) { mutableStateOf(false) }
+    val quiet = fadeInOnLoad && !url.isNullOrBlank() && !failed
+    val reveal = remember(url) { Animatable(if (fadeInOnLoad) 0f else 1f) }
+    val scope = rememberCoroutineScope()
     Box(
         sized.clip(RoundedCornerShape(corner))
-            .background(placeholderColors[(title.hashCode() and 0x7fffffff) % placeholderColors.size]),
+            .background(
+                if (quiet) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
+                else placeholderColors[(title.hashCode() and 0x7fffffff) % placeholderColors.size],
+            ),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            initials(title),
-            color = Color.White,
-            fontWeight = FontWeight.Bold,
-            fontSize = when {
-                size == null || size >= 64.dp -> 28.sp
-                size >= 32.dp -> 16.sp
-                else -> 8.sp
-            },
-        )
+        if (!quiet) {
+            Text(
+                initials(title),
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                fontSize = when {
+                    size == null || size >= 64.dp -> 28.sp
+                    size >= 32.dp -> 16.sp
+                    else -> 8.sp
+                },
+            )
+        }
         if (!url.isNullOrBlank()) {
             val context = LocalPlatformContext.current
             // A new request starts empty, even when cached, so it stands on the last image shown (or [placeholderKey]).
@@ -125,11 +144,16 @@ fun Artwork(
                 contentDescription = title,
                 contentScale = ContentScale.Crop,
                 alignment = alignment,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().graphicsLayer { alpha = reveal.value },
                 onSuccess = {
                     shown = it.result.memoryCacheKey
                     onLoaded?.invoke(it.result.memoryCacheKey)
+                    if (fadeInOnLoad) scope.launch {
+                        if (it.result.dataSource == DataSource.MEMORY_CACHE) reveal.snapTo(1f)
+                        else reveal.animateTo(1f, tween(CoverFadeInMillis))
+                    }
                 },
+                onError = { if (fadeInOnLoad) failed = true },
             )
         }
         when {
@@ -141,6 +165,8 @@ fun Artwork(
         }
     }
 }
+
+private const val CoverFadeInMillis = 280
 
 /**
  * A ribbon of [color] filling the cover's top-left corner, sized to the cover, with [label] along its edge in white at
