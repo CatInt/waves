@@ -346,9 +346,16 @@ internal fun chartLines(shows: List<ChartShow>, episodes: List<ChartEpisode>, ac
         // Its episode rows go to the best episodes first, wherever their shows sit.
         val best = section.filterIsInstance<ChartLine.Featured>().map { it.episode }
             .sortedBy { episodeRank.getValue(it) }.iterator()
-        val lines = section.map { line ->
+        val labelled = section.map { line ->
             if (line !is ChartLine.Featured) line
             else best.next().let { ChartLine.Featured(it, 0, "#${episodeRank.getValue(it) + 1} today") }
+        }
+        // Two episodes and one row of covers: the covers go between them, the better episode above.
+        val episodes = labelled.filterIsInstance<ChartLine.Featured>()
+        val lines = if (labelled.size == 3 && episodes.size == 2) {
+            listOf(episodes[0], labelled.first { it is ChartLine.Shows }, episodes[1])
+        } else {
+            labelled
         }
         if (lines.isNotEmpty()) sections += genre to lines
     }
