@@ -24,6 +24,9 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -46,6 +49,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -201,6 +206,44 @@ fun PodcastScreen(
             // The hero stays put; the gap opens under it, above the episodes.
             gapInContent = true,
         ) {
+            // Let go part way through the hero's collapse, the page finishes it the way the touch was going: fully
+            // collapsed after a move up the page, fully open after one down, rather than resting half-folded.
+            // Where the page stood when the movement began (past the hero counts as all the way).
+            var movedFrom by remember { mutableIntStateOf(0) }
+            LaunchedEffect(listState) {
+                snapshotFlow { listState.isScrollInProgress }.collect { moving ->
+                    if (moving) {
+                        movedFrom = if (listState.firstVisibleItemIndex == 0) listState.firstVisibleItemScrollOffset else Int.MAX_VALUE
+                    }
+                }
+            }
+            SnapToTopLine(
+                scrolling = { listState.isScrollInProgress },
+                offsets = {
+                    // Read when the page comes to rest: the hero's height is only known after the first frames.
+                    val heroTravel = (heroHeight - barPx).coerceAtLeast(0)
+                    val scrolled = listState.firstVisibleItemScrollOffset
+                    if (listState.firstVisibleItemIndex != 0 || heroTravel == 0 || scrolled <= 0 || scrolled >= heroTravel) {
+                        emptyList()
+                    } else {
+                        // Collapsed means the first episode resting where the episodes' own snap puts it, on the
+                        // bar's line: aim there, so that snap has nothing left to do (the rows above it, the pull's
+                        // gap and any notice, would otherwise leave it a few pixels off).
+                        val info = listState.layoutInfo
+                        val firstRow = info.visibleItemsInfo.firstOrNull { it.contentType == EpisodeRowType }
+                        val toCollapsed = firstRow?.let { it.offset - info.viewportStartOffset - barPx }
+                            ?: (heroTravel - scrolled)
+                        when {
+                            scrolled > movedFrom -> listOf(toCollapsed) // moving up: collapse
+                            scrolled < movedFrom -> listOf(-scrolled) // moving down: open
+                            else -> listOf(-scrolled, toCollapsed) // no telling: the nearer end
+                        }
+                    }
+                },
+                scrollBy = { listState.animateScrollBy(it, spring(stiffness = Spring.StiffnessMediumLow)) },
+                // Any distance: [offsets] only offers the two ends while the hero is part way.
+                reach = Dp.Infinity,
+            )
             // Once the bar has its divider, episodes come to rest with theirs on it, and never with it across a title.
             val guides = rememberSnapGuides()
             if (barPinned) {
