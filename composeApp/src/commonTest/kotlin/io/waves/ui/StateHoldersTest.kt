@@ -74,6 +74,43 @@ class DiscoverStateTest {
     }
 
     @Test
+    fun aTopEpisodeAppleDoesntListYetIsFoundInItsShowsFeed() = runTest {
+        val fresh = io.waves.model.Episode(guid = "new", podcastFeedUrl = podcastA.feedUrl, title = "#2574 – Guests", audioUrl = "n.mp3", durationSeconds = 9854)
+        val dir = object : io.waves.search.PodcastDirectory by RecordingDirectory(listOf(podcastA.copy(appleId = 9))) {
+            override suspend fun playable(episode: io.waves.search.ChartEpisode, country: String) = null
+        }
+        val fetched = mutableListOf<String>()
+        val s = DiscoverState(dir, backgroundScope, fetchFeed = { url ->
+            fetched += url
+            io.waves.feed.Feed(podcastA, listOf(fresh))
+        })
+        s.lookUpTopEpisode(io.waves.search.ChartEpisode("#2574  – guests", "A", null, showAppleId = 9, appleId = 1))
+        settle()
+        assertEquals(fresh, s.state.value.playableEpisodes[1L]?.second)
+        assertEquals(listOf(podcastA.feedUrl), fetched)
+    }
+
+    @Test
+    fun aTopEpisodeStoredAlreadyNeedsNoLookup() = runTest {
+        val stored = io.waves.model.Episode(guid = "s", podcastFeedUrl = podcastA.feedUrl, title = "E", audioUrl = "s.mp3", durationSeconds = 60)
+        var asked = false
+        val dir = object : io.waves.search.PodcastDirectory by RecordingDirectory(listOf(podcastA.copy(appleId = 9))) {
+            override suspend fun playable(episode: io.waves.search.ChartEpisode, country: String): Pair<io.waves.model.Podcast, io.waves.model.Episode>? {
+                asked = true
+                return null
+            }
+        }
+        val s = DiscoverState(dir, backgroundScope, storedEpisodes = { if (it == podcastA.feedUrl) listOf(stored) else emptyList() })
+        // The chart's show lookup gives the show (and its feed) the stored episodes are found under.
+        val top = io.waves.search.ChartEpisode("E", "A", null, showAppleId = 9, appleId = 1)
+        s.seedEpisodeShows(mapOf(9L to podcastA))
+        s.lookUpTopEpisode(top)
+        settle()
+        assertEquals(stored, s.state.value.playableEpisodes[1L]?.second)
+        assertFalse(asked)
+    }
+
+    @Test
     fun refreshWithoutAQueryReloadsTopCharts() = runTest {
         val dir = RecordingDirectory(listOf(podcastA), failTop = true)
         val s = DiscoverState(dir, backgroundScope)

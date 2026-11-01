@@ -11,6 +11,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 
 class RssFeedRepositoryTest {
 
@@ -34,6 +35,38 @@ class RssFeedRepositoryTest {
         val bytes = ByteArray(xml.length) { xml[it].code.toByte() }
         val client = HttpClient(MockEngine { respond(bytes, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "text/xml")) })
         assertEquals("Café", RssFeedRepository(client).fetch("u").podcast.title)
+    }
+
+    @Test
+    fun latestReadsOnlyTheStartAndKeepsItsWholeItems() = runTest {
+        val items = (1..400).joinToString("") { n ->
+            "<item><title>Episode $n</title><guid>g$n</guid><enclosure url=\"https://a/$n.mp3\" type=\"audio/mpeg\"/>" +
+                "<itunes:duration>01:00:00</itunes:duration><description>${"words ".repeat(40)}</description></item>"
+        }
+        val xml = "<?xml version=\"1.0\"?><rss xmlns:itunes=\"http://www.itunes.com/dtds/podcast-1.0.dtd\"><channel>" +
+            "<title>Long</title>$items</channel></rss>"
+        var range: String? = null
+        // A server that ignores the range and sends everything.
+        val client = HttpClient(MockEngine { req ->
+            range = req.headers[HttpHeaders.Range]
+            respond(xml, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/rss+xml"))
+        })
+        val feed = RssFeedRepository(client).fetchLatest("https://x/feed", maxBytes = 8 * 1024)
+        assertEquals("bytes=0-8191", range)
+        assertEquals("Long", feed.podcast.title)
+        assertEquals("Episode 1", feed.episodes.first().title)
+        assertEquals(3600, feed.episodes.first().durationSeconds)
+        assertTrue(feed.episodes.size in 2 until 400, "only the items read in full: ${feed.episodes.size}")
+    }
+
+    @Test
+    fun aWholeFeedReadAsItsStartComesBackWhole() {
+        val xml = "<rss><channel><item><title>A</title></item></channel></rss>"
+        assertEquals(xml, RssFeedRepository.closeAfterLastItem(xml))
+        assertEquals(
+            "<rss><channel><item><title>A</title></item></channel></rss>",
+            RssFeedRepository.closeAfterLastItem("<rss><channel><item><title>A</title></item><item><tit"),
+        )
     }
 
     @Test

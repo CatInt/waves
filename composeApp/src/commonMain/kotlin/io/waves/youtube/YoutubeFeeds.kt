@@ -33,6 +33,14 @@ class YoutubeFeedRepository(private val client: HttpClient) : FeedRepository {
      * so Shorts stay out. A channel with no regular videos falls back to its channel feed, minus Shorts. When the
      * Atom feeds fail, the Videos tab stands in for them ([YoutubeWebFeed]).
      */
+    /** A podcast feed's start; YouTube's, which are short, whole. */
+    override suspend fun fetchLatest(feedUrl: String, maxBytes: Int): Feed =
+        if (YoutubeUrls.playlistIdOfFeed(feedUrl) == null && YoutubeUrls.channelIdOfFeed(feedUrl) == null) {
+            rss.fetchLatest(feedUrl, maxBytes)
+        } else {
+            fetch(feedUrl)
+        }
+
     override suspend fun fetch(feedUrl: String): Feed {
         YoutubeUrls.playlistIdOfFeed(feedUrl)?.let { return playlists.feed(feedUrl, it) }
         val channelId = YoutubeUrls.channelIdOfFeed(feedUrl) ?: return rss.fetch(feedUrl)

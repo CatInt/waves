@@ -113,6 +113,8 @@ class AppState(deps: AppDependencies, scope: kotlinx.coroutines.CoroutineScope) 
         country = deps.settings.settings.map { it.effectiveCountry }
             .stateIn(scope, SharingStarted.Eagerly, deps.settings.settings.value.effectiveCountry),
         resolveYoutube = deps.youtube?.let { channels -> { channels.shows(it) } },
+        fetchFeed = { deps.feeds.fetchLatest(it) },
+        storedEpisodes = { deps.library.episodes(it).first() },
     )
     val home = HomeState(
         deps.library, deps.feeds, scope,
