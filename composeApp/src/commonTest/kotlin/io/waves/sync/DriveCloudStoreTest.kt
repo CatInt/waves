@@ -66,7 +66,7 @@ class DriveCloudStoreTest {
                 else -> error("unexpected ${req.url}")
             }
         }
-        assertEquals("""{"version":1}""" to "17", s.read("s.json"))
+        assertEquals("""{"version":1}""" to "FILE1@17", s.read("s.json"), "the revision names the file as well as its version")
     }
 
     @Test
@@ -98,7 +98,7 @@ class DriveCloudStoreTest {
                 else -> error("unexpected ${req.method} ${req.url}")
             }
         }
-        s.write("s.json", "content", ifRevision = "5")
+        s.write("s.json", "content", ifRevision = "ID@5")
         val (req, body) = requests.last()
         assertEquals("media", req.url.parameters["uploadType"])
         assertEquals("content", body)
@@ -107,7 +107,7 @@ class DriveCloudStoreTest {
     @Test
     fun writeThrowsConflictOnVersionMismatch() = runTest {
         val s = store { req -> if (req.isList) list("ID" to "6") else error("must not upload") }
-        assertFailsWith<ConflictException> { s.write("s.json", "c", ifRevision = "5") }
+        assertFailsWith<ConflictException> { s.write("s.json", "c", ifRevision = "ID@5") }
     }
 
     @Test
@@ -203,7 +203,7 @@ class DriveCloudStoreTest {
         assertTrue(create.second.contains(""""mimeType":"application/gzip""""), create.second)
         assertTrue(create.second.contains("Content-Type: application/gzip"), create.second)
 
-        s.write("s.json", """{"hello":"again"}""", ifRevision = "2")
+        s.write("s.json", """{"hello":"again"}""", ifRevision = "ID@2")
         val (patch, _) = requests.last()
         assertEquals(HttpMethod.Patch, patch.method)
         assertEquals("application/gzip", patch.body.contentType?.withoutParameters().toString())
