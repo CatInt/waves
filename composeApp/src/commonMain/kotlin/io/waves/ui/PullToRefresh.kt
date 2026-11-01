@@ -27,6 +27,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import kotlin.math.max
+import io.waves.currentTimeMillis
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -82,8 +85,8 @@ import kotlinx.coroutines.withTimeoutOrNull
  *
  * The content itself moves down with the pull, opening a gap at the top with the spinner in it, never wider than the
  * pull that starts a refresh. Once a pull starts one, the gap stays open and the content holds still, taking no scroll,
- * until the refresh is over; then it springs back up. A pull whose [onRefresh] does nothing (offline, sync
- * rate-limited) spins for [MinSpinMillis] instead. Content whose rows animate into place once a refresh lands passes
+ * until the refresh is over, and for at least [MinWavesMillis] either way, so a quick one doesn't flash the waves; then
+ * it springs back up. Content whose rows animate into place once a refresh lands passes
  * [settleMillis] to hold that much longer, so the rows finish moving before the whole list does.
  *
  * Only a pull opens the gap: a refresh that starts on its own ([isRefreshing] with no pull) leaves the content be,
@@ -114,16 +117,16 @@ fun WavesPullToRefreshBox(
     // Stays set until the gap has closed, so the coast after a lift can't start the refresh over again.
     var cycle by remember { mutableStateOf(false) }
     var sawRefresh by remember { mutableStateOf(false) }
+    // When the pull was let go, for the waves' least time on screen.
+    var armedAt by remember { mutableLongStateOf(0L) }
     LaunchedEffect(armed, isRefreshing) {
         if (!armed) return@LaunchedEffect
         if (isRefreshing) {
             sawRefresh = true
-        } else if (sawRefresh) {
-            delay(settleMillis)
-            sawRefresh = false
-            armed = false
         } else {
-            delay(MinSpinMillis)
+            val left = MinWavesMillis - (currentTimeMillis() - armedAt)
+            delay(if (sawRefresh) max(settleMillis, left) else left)
+            sawRefresh = false
             armed = false
         }
     }
@@ -155,8 +158,21 @@ fun WavesPullToRefreshBox(
     val shown = remember { Animatable(0f) }
     SideEffect { progress?.source = { shown.value } }
     var bouncing by remember { mutableStateOf(false) }
-    // A refresh nobody pulled for, shown all the same: the gap opens to the threshold and holds while it runs.
-    val unpulled = showsRefresh && isRefreshing && !armed
+    // A refresh nobody pulled for, shown all the same: the gap opens to the threshold and holds while it runs, and
+    // for at least [MinWavesMillis] however quick it is.
+    val running = showsRefresh && isRefreshing && !armed
+    var held by remember { mutableStateOf(false) }
+    var heldFrom by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(running) {
+        if (running) {
+            if (!held) heldFrom = currentTimeMillis()
+            held = true
+        } else if (held) {
+            delay(MinWavesMillis - (currentTimeMillis() - heldFrom))
+            held = false
+        }
+    }
+    val unpulled = (running || held) && !armed
     val unpulledNow by rememberUpdatedState(unpulled) // for the lambdas below, which outlive this composition
     LaunchedEffect(state, armed, unpulled) {
         if (unpulled) {
@@ -180,6 +196,7 @@ fun WavesPullToRefreshBox(
         onRefresh = {
             if (!cycle) {
                 cycle = true
+                armedAt = currentTimeMillis()
                 armed = true
                 onRefresh()
             }
@@ -258,7 +275,8 @@ fun PullGap(modifier: Modifier = Modifier, divider: Boolean = false) {
     }
 }
 
-private const val MinSpinMillis = 500L
+/** The least time the waves roll for a refresh, pulled or not: a quick one would otherwise only flash them. */
+private const val MinWavesMillis = 1_000L
 
 /** Opens the gap for a refresh that started without a pull. */
 private val OpenUnpulled = tween<Float>(durationMillis = 300, easing = FastOutSlowInEasing)
