@@ -111,6 +111,9 @@ class HomeState(
 
     private val downloadedIds = downloads.map { list -> list.map { it.episodeId }.toSet() }.distinctUntilChanged()
 
+    /** When each download was asked for, which Up next weighs. */
+    private val downloadedAt = downloads.map { list -> list.associate { it.episodeId to it.createdAtEpochMs } }.distinctUntilChanged()
+
     /** Downloaded episodes of shows the user doesn't subscribe to, by show. */
     private val otherDownloads: Flow<Map<Podcast, List<Episode>>> =
         combine(library.subscriptions.map { subs -> subs.map { it.feedUrl }.toSet() }, downloadedIds) { subscribed, ids ->
@@ -141,7 +144,7 @@ class HomeState(
         }
 
     private val ranked: StateFlow<Ranked?> =
-        combine(sources, library.allProgress, library.history, downloadedIds, playable) { src, progress, history, downloaded, playable ->
+        combine(sources, library.allProgress, library.history, downloadedAt, playable) { src, progress, history, downloadedAt, playable ->
             val subs = src.subscriptions
             val others = src.others
             val now = clock()
@@ -152,7 +155,9 @@ class HomeState(
             Ranked(
                 subscriptions = subs.sortedBy { it.title.lowercase() },
                 shelf = UpNextRanking.orderShelf(subs, subscribed, byId, history, now),
-                upNext = UpNextRanking.rank(subs + others.keys, visible, byId, history, now, limit = upNextLimit, downloaded = downloaded),
+                upNext = UpNextRanking.rank(subs + others.keys, visible, byId, history, now, limit = upNextLimit,
+                    downloaded = downloadedAt.keys, downloadedAt = downloadedAt.filterValues { it > 0 },
+                ),
                 hasEpisodes = subscribed.values.any { it.isNotEmpty() },
             )
         }.flowOn(workContext).stateIn(scope, SharingStarted.Eagerly, null)

@@ -24,8 +24,9 @@ data class UpNextItem(val podcast: Podcast, val row: EpisodeRow, val reason: UpN
  * - Completed episodes are left out. Each show contributes its unfinished episodes plus at most
  *   `perShowCandidates` newest unplayed ones, and every further pick from the same show is halved, so one
  *   prolific show can't fill the list.
- * - Downloaded episodes (any download state) are always listed, after the ranked ones if `limit` cut them off:
- *   Home is where downloads are found.
+ * - Downloaded episodes (downloaded by hand, in any download state) rank high: a boost just under an unfinished
+ *   episode's that fades with a 7-day half-life since the download, down to a small lasting one. They're always listed, after the ranked ones if
+ *   `limit` cut them off: Home is where downloads are found.
  */
 object UpNextRanking {
     private const val DAY = 24 * 60 * 60 * 1000L
@@ -38,6 +39,9 @@ object UpNextRanking {
     private const val COMPLETION_WEIGHT = 0.5
     private const val RESUME_BASE = 1.5
     private const val RESUME_RECENT = 2.0
+    private const val DOWNLOAD_BASE = 0.5
+    private const val DOWNLOAD_RECENT = 2.0
+    private const val DOWNLOAD_HALF_LIFE_DAYS = 7.0
     /** About three recent sessions or more. */
     private val FREQUENT_AFFINITY = ln(4.0)
 
@@ -50,6 +54,8 @@ object UpNextRanking {
         limit: Int = 50,
         perShowCandidates: Int = 10,
         downloaded: Set<EpisodeId> = emptySet(),
+        /** When each of [downloaded] was asked for; one missing counts as just now. */
+        downloadedAt: Map<EpisodeId, Long> = emptyMap(),
     ): List<UpNextItem> {
         val affinity = showAffinity(history, progress.values, now)
         val remaining = podcasts.sortedBy { it.title.lowercase() }.flatMap { podcast ->
@@ -61,7 +67,8 @@ object UpNextRanking {
             val kept = fresh.filterIndexed { i, e -> i < perShowCandidates || e.id in downloaded }
             (started + kept).map { episode ->
                 val row = EpisodeRow(episode, progress[episode.id])
-                Candidate(UpNextItem(podcast, row, reason(row, a, now, episode.id in downloaded)), score(row, a, now))
+                val since = if (episode.id in downloaded) now - (downloadedAt[episode.id] ?: now) else null
+                Candidate(UpNextItem(podcast, row, reason(row, a, now, since != null)), score(row, a, now, since))
             }
         }.toMutableList()
 
@@ -116,10 +123,12 @@ object UpNextRanking {
 
     private class Candidate(val item: UpNextItem, val score: Double)
 
-    private fun score(row: EpisodeRow, affinity: Double, now: Long): Double {
+    /** [downloadedAgoMs]: how long ago it was downloaded by hand, null when it wasn't. */
+    private fun score(row: EpisodeRow, affinity: Double, now: Long, downloadedAgoMs: Long? = null): Double {
         val published = row.episode.publishedAtEpochMs
         val freshness = if (published != null) decay(now - published, FRESHNESS_HALF_LIFE_DAYS) else UNDATED_FRESHNESS
-        val base = freshness * (1 + affinity)
+        val downloadBoost = downloadedAgoMs?.let { DOWNLOAD_BASE + DOWNLOAD_RECENT * decay(it, DOWNLOAD_HALF_LIFE_DAYS) } ?: 0.0
+        val base = freshness * (1 + affinity) + downloadBoost
         val p = row.progress
         return if (p != null && isStarted(p)) {
             base + RESUME_BASE + RESUME_RECENT * decay(now - p.updatedAtEpochMs, RESUME_HALF_LIFE_DAYS)
@@ -132,9 +141,9 @@ object UpNextRanking {
         val published = row.episode.publishedAtEpochMs
         return when {
             isStarted(row.progress) -> UpNextReason.ContinueListening
+            downloaded -> UpNextReason.Downloaded
             published != null && now - published <= NEW_WITHIN_MS -> UpNextReason.New
             affinity >= FREQUENT_AFFINITY -> UpNextReason.FrequentShow
-            downloaded -> UpNextReason.Downloaded
             else -> UpNextReason.Latest
         }
     }

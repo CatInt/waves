@@ -111,8 +111,35 @@ class UpNextRankingTest {
             listOf(podcastA), mapOf(podcastA.feedUrl to many), emptyMap(), emptyList(), now,
             limit = 3, perShowCandidates = 10, downloaded = setOf(old.id),
         )
-        assertEquals(many.take(3) + old, items.map { it.row.episode })
-        assertEquals(UpNextReason.Downloaded, items.last().reason)
+        // Downloaded by hand, the month-old episode ranks first.
+        assertEquals(listOf(old) + many.take(2), items.map { it.row.episode })
+        assertEquals(UpNextReason.Downloaded, items.first().reason)
+    }
+
+    @Test
+    fun aDownloadRanksAboveFreshEpisodesButBelowOneBeingListenedTo() {
+        val started = ep(podcastA, 1, 20.0)
+        val fresh = ep(podcastB, 2, 0.2)
+        val download = ep(podcastB, 3, 30.0)
+        val items = UpNextRanking.rank(
+            listOf(podcastA, podcastB), mapOf(podcastA.feedUrl to listOf(started), podcastB.feedUrl to listOf(fresh, download)),
+            listOf(progress(started, 60_000)).associateBy { it.episodeId }, emptyList(), now,
+            downloaded = setOf(download.id), downloadedAt = mapOf(download.id to now - 3 * day),
+        )
+        assertEquals(listOf(started, download, fresh), items.map { it.row.episode })
+    }
+
+    @Test
+    fun aDownloadsBoostFadesOverTheWeeks() {
+        val fresh = ep(podcastA, 1, 0.2)
+        val download = ep(podcastB, 2, 30.0)
+        val items = UpNextRanking.rank(
+            listOf(podcastA, podcastB), mapOf(podcastA.feedUrl to listOf(fresh), podcastB.feedUrl to listOf(download)),
+            emptyMap(), emptyList(), now,
+            downloaded = setOf(download.id), downloadedAt = mapOf(download.id to now - 60 * day),
+        )
+        // Two months on, only the lasting part of the boost is left, and a new episode can pass it.
+        assertEquals(listOf(fresh, download), items.map { it.row.episode })
     }
 
     @Test
