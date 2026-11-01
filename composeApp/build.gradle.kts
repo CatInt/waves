@@ -96,6 +96,8 @@ kotlin {
             implementation(libs.sqldelight.android.driver)
             implementation(libs.play.services.auth)
             implementation(libs.media3.exoplayer)
+            // Some YouTube videos (live, just-ended streams) only come as HLS.
+            implementation(libs.media3.exoplayer.hls)
             implementation(libs.media3.session)
             implementation(libs.media3.datasource)
             implementation(libs.media3.database)

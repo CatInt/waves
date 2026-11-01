@@ -2,6 +2,7 @@ package io.waves.youtube
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 
@@ -9,7 +10,8 @@ class YtDlpAndroidSourceTest {
     @Test
     fun argumentsPreferM4aAndPrintOnlyTheUrl() {
         val args = ytdlpAudioArguments("sampleVid01")
-        assertEquals("bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]/bestaudio", args[args.indexOf("-f") + 1])
+        assertEquals(YTDLP_AUDIO_FORMAT, args[args.indexOf("-f") + 1])
+        assertTrue(YTDLP_AUDIO_FORMAT.startsWith("bestaudio[ext=m4a][protocol^=http]"), "a plain HTTPS file first")
         assertEquals("--get-url", args[args.indexOf("-f") + 2])
         assertFalse("--cookies" in args)
         assertEquals("https://www.youtube.com/watch?v=sampleVid01", args.last())
