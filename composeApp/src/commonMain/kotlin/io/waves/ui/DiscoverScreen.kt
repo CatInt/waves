@@ -42,6 +42,8 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.runtime.remember
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.snapshotFlow
@@ -230,9 +232,30 @@ private fun TopCharts(
                 }.collect(onScrolledGenre)
             }
             DisposableEffect(Unit) { onDispose { onScrolledGenre(null) } }
+            // As on Home, the list comes to rest with an edge on the divider: a genre's divider on it, or a row's
+            // covers or an episode's text just under it, not a sliver of one; failing that, never across a title or
+            // a row of covers.
+            val guides = rememberSnapGuides()
+            val edges = with(density) { lines.indices.map { chartLineEdge(lines, it).roundToPx() } }
+            val dividerPx = with(density) { ListDividerHeight.roundToPx() }
+            SnapToTopLine(
+                scrolling = { listState.isScrollInProgress },
+                offsets = {
+                    listState.layoutInfo.visibleItemsInfo.mapNotNull { item ->
+                        val edge = edges.getOrNull(item.index) ?: return@mapNotNull null
+                        // A genre's own divider lies on the list's, which sits in the top padding; the rest rest under it.
+                        val onDivider = item.index > 0 && lines[item.index] is ChartLine.Section
+                        item.offset + edge + if (onDivider) dividerPx else 0
+                    }
+                },
+                scrollBy = { listState.animateScrollBy(it, spring(stiffness = 600f)) },
+                reach = EpisodeSnapReach,
+                uncover = { guides.uncover(0f, dividerPx.toFloat()) },
+            )
             LazyColumn(
                 state = listState,
-                modifier = Modifier.fillMaxSize().verticalFadingEdge(fadeLength = 0.dp, bottomFadeLength = floatingBarBottomGap()),
+                modifier = Modifier.fillMaxSize().snapGuideList(guides)
+                    .verticalFadingEdge(fadeLength = 0.dp, bottomFadeLength = floatingBarBottomGap()),
                 contentPadding = listContentPadding(top = ListDividerHeight),
             ) {
                 itemsIndexed(lines, key = { _, line -> line.key }) { index, line ->
@@ -247,13 +270,13 @@ private fun TopCharts(
                                 .contentInset().padding(
                                     start = ScreenGutter, end = ScreenGutter, bottom = SectionHeadingBottom,
                                     top = if (before == null) FirstSectionHeadingTop else 14.dp,
-                                ),
+                                ).keepWhole(guides),
                         )
                         is ChartLine.Shows -> Row(
                             Modifier.fillMaxWidth().contentInset().padding(
                                 start = ScreenGutter, end = ScreenGutter, bottom = ShowCellGap,
                                 top = if (before is ChartLine.Featured) 8.dp else 0.dp,
-                            ),
+                            ).keepWhole(guides),
                             horizontalArrangement = Arrangement.spacedBy(ShowCellGap),
                         ) {
                             line.shows.forEach { show -> ShowCell(show, onOpenPodcast, Modifier.weight(1f)) }
@@ -265,6 +288,7 @@ private fun TopCharts(
                             label = line.label,
                             cover = cell,
                             coverAtStart = line.order % 2 == 0,
+                            snapGuides = guides,
                         )
                     }
                 }
@@ -372,6 +396,17 @@ private fun genreRows(ranked: List<ChartShow>, featured: Set<ChartEpisode>, acro
     return rows
 }
 
+/**
+ * Where the [index]th of [lines] has its edge, down from its top: a genre's divider (the first genre's heading, which
+ * has none), a row's covers, an episode's first line.
+ */
+private fun chartLineEdge(lines: List<ChartLine>, index: Int): Dp = when (lines[index]) {
+    is ChartLine.Section -> if (index == 0) 0.dp else SectionHeadingTop - 14.dp
+    is ChartLine.Shows -> if (lines.getOrNull(index - 1) is ChartLine.Featured) 8.dp else 0.dp
+    // Without a divider of its own, an episode row's content starts this far down (EpisodeItem's top padding).
+    is ChartLine.Featured -> 12.dp - ListDividerHeight
+}
+
 /** How far down its line a genre's heading text starts: the first's, and the rest's, under their dividers. */
 private val FirstSectionHeadingTop = 8.dp
 private val SectionHeadingTop = 24.dp
@@ -394,6 +429,7 @@ private fun TopEpisode(
     cover: Dp,
     coverAtStart: Boolean,
     label: String,
+    snapGuides: SnapGuides? = null,
 ) {
     // The show as looked up (its own cover, its feed); until then, what the chart says.
     val show = ui.episodeShows[episode.showAppleId]
@@ -432,6 +468,7 @@ private fun TopEpisode(
         showLabel = label,
         showAge = false,
         pillPlaceholder = typical,
+        snapGuides = snapGuides,
     )
 }
 
