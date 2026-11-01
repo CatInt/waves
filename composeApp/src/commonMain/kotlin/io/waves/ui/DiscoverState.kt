@@ -1,5 +1,6 @@
 package io.waves.ui
 
+import io.waves.feed.Feed
 import io.waves.model.Episode
 import io.waves.model.Podcast
 import io.waves.search.ChartEpisode
@@ -66,6 +67,13 @@ class DiscoverState(
     private val debounceMs: Long = 350,
     private val country: StateFlow<String> = MutableStateFlow("us"),
     private val resolveYoutube: (suspend (String) -> List<Podcast>)? = null,
+    /**
+     * The start of a show's feed (its newest episodes), for top episodes Apple's lookup doesn't list yet; null leaves
+     * those unfound.
+     */
+    private val fetchFeed: (suspend (String) -> Feed)? = null,
+    /** Episodes already stored for a show (one subscribed to, or played): looked in first, at no cost. */
+    private val storedEpisodes: (suspend (String) -> List<Episode>)? = null,
 ) {
     private val _state = MutableStateFlow(DiscoverUiState())
     val state: StateFlow<DiscoverUiState> = _state.asStateFlow()
@@ -130,13 +138,16 @@ class DiscoverState(
     private fun lookUp(episode: ChartEpisode): Deferred<Pair<Podcast, Episode>?> = lookups.getOrPut(episode.appleId) {
         scope.async {
             val found = lookupPermits.withPermit {
-                try {
+                // Cheapest first: what's stored here already, then Apple's lookup (one small reply), and only for an
+                // episode that lookup doesn't list yet (it lags the chart) the start of the show's feed, where the
+                // newest episodes are, never the whole of it.
+                fromStore(episode) ?: try {
                     directory.playable(episode, country.value)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (_: Exception) {
                     null
-                }
+                } ?: fromFeed(episode)
             }
             if (found == null) lookups.remove(episode.appleId)
             _state.update { s ->
@@ -145,6 +156,62 @@ class DiscoverState(
             }
             found
         }
+    }
+
+    /** For tests: the top episodes' shows as if looked up. */
+    internal fun seedEpisodeShows(shows: Map<Long, Podcast>) {
+        _state.update { it.copy(episodeShows = it.episodeShows + shows) }
+    }
+
+    /** [episode] among those stored for its show already, matched by title. */
+    private suspend fun fromStore(episode: ChartEpisode): Pair<Podcast, Episode>? {
+        val stored = storedEpisodes ?: return null
+        val show = _state.value.episodeShows[episode.showAppleId]?.takeIf { it.feedUrl.isNotBlank() } ?: return null
+        val title = sameTitle(episode.title)
+        val found = try {
+            stored(show.feedUrl).firstOrNull { sameTitle(it.title) == title && it.audioUrl.isNotBlank() }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        } ?: return null
+        return show to found.copy(artworkUrl = found.artworkUrl ?: episode.artworkUrl)
+    }
+
+    /** [episode]'s show, as looked up for the charts or (kept a week) now. */
+    private suspend fun showOf(episode: ChartEpisode): Podcast? = _state.value.episodeShows[episode.showAppleId] ?: try {
+        directory.lookup(episode.showAppleId)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        null
+    }
+
+    /** Feeds fetched for top episodes, by URL: a show with two on the chart is fetched once. */
+    private val feeds = mutableMapOf<String, Deferred<Feed?>>()
+
+    /**
+     * [episode] from its show's own feed, matched by title: Apple's lookup lags its chart, so an episode out a few hours
+     * can be charted but not listed there yet, while the feed already has it.
+     */
+    private suspend fun fromFeed(episode: ChartEpisode): Pair<Podcast, Episode>? {
+        val fetch = fetchFeed ?: return null
+        val feedUrl = showOf(episode)?.feedUrl?.takeIf { it.isNotBlank() } ?: return null
+        val feed = feeds.getOrPut(feedUrl) {
+            scope.async {
+                try {
+                    fetch(feedUrl)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    null
+                }
+            }
+        }.await() ?: return null.also { feeds.remove(feedUrl) }
+        val title = sameTitle(episode.title)
+        val found = feed.episodes.firstOrNull { sameTitle(it.title) == title } ?: return null
+        return feed.podcast.copy(appleId = feed.podcast.appleId ?: episode.showAppleId) to
+            found.copy(artworkUrl = found.artworkUrl ?: episode.artworkUrl)
     }
 
     /**
@@ -281,3 +348,8 @@ private const val TopShowCount = 50
 
 /** How many top episodes are looked up at once as their rows come into view. */
 private const val EpisodeLookupsAtOnce = 4
+
+/** A title as compared across Apple's chart and a feed: case, spacing and quote styles aside. */
+internal fun sameTitle(title: String): String =
+    title.lowercase().replace('’', '\'').replace('‘', '\'').replace('“', '"').replace('”', '"')
+        .replace(Regex("\\s+"), " ").trim()

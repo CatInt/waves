@@ -2,6 +2,9 @@ package io.waves.feed
 
 import io.ktor.client.HttpClient
 import io.ktor.client.request.get
+import io.ktor.utils.io.readAvailable
+import io.ktor.client.statement.bodyAsChannel
+import io.ktor.client.request.prepareGet
 import io.ktor.client.request.header
 import io.ktor.client.statement.bodyAsBytes
 import io.ktor.http.HttpHeaders
@@ -36,8 +39,59 @@ class RssFeedRepository(private val client: HttpClient) : FeedRepository {
         }
     }
 
+    /**
+     * Reads no more than [maxBytes] of the feed (asking for just that range, and stopping there if the server sends
+     * it all), then parses the items read in full; the rest of the download is dropped unread.
+     */
+    override suspend fun fetchLatest(feedUrl: String, maxBytes: Int): Feed {
+        val (bytes, charset) = try {
+            client.prepareGet(feedUrl) {
+                header(HttpHeaders.UserAgent, USER_AGENT)
+                header(HttpHeaders.Accept, "application/rss+xml, application/xml;q=0.9, text/xml;q=0.9, */*;q=0.8")
+                header(HttpHeaders.Range, "bytes=0-${maxBytes - 1}")
+                // A range of compressed bytes wouldn't decompress on its own.
+                header(HttpHeaders.AcceptEncoding, "identity")
+            }.execute { response ->
+                if (!response.status.isSuccess()) {
+                    throw FeedFetchException("Failed to download $feedUrl: HTTP ${response.status.value}")
+                }
+                val channel = response.bodyAsChannel()
+                val buffer = ByteArray(maxBytes)
+                var read = 0
+                while (read < maxBytes) {
+                    val n = channel.readAvailable(buffer, read, maxBytes - read)
+                    if (n <= 0) break
+                    read += n
+                }
+                buffer.copyOf(read) to response.contentType()?.parameter("charset")
+            }
+        } catch (e: FeedFetchException) {
+            throw e
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            throw FeedFetchException("Failed to download $feedUrl: ${e.message}", e)
+        }
+        return withContext(Dispatchers.Default) { FeedParser.parse(feedUrl, closeAfterLastItem(decode(bytes, charset))) }
+    }
+
     internal companion object {
         const val USER_AGENT = "Waves/0.1 (podcast app)"
+
+        /**
+         * The start of a feed, cut after its last complete item (or Atom entry) and closed, so it parses as a feed of
+         * those items; a whole feed comes back as it is.
+         */
+        fun closeAfterLastItem(xml: String): String {
+            val rss = xml.lastIndexOf("</item>")
+            val atom = xml.lastIndexOf("</entry>")
+            return when {
+                xml.trimEnd().endsWith(">") && (xml.contains("</rss>") || xml.contains("</feed>")) -> xml
+                rss >= 0 && rss > atom -> xml.substring(0, rss + "</item>".length) + "</channel></rss>"
+                atom >= 0 -> xml.substring(0, atom + "</entry>".length) + "</feed>"
+                // Not even one item read: just the channel's opening, which says nothing of its episodes.
+                else -> throw FeedFetchException("No complete item in the first ${xml.length} characters")
+            }
+        }
 
         /**
          * Decodes feed bytes. The XML declaration's encoding wins over the HTTP charset (servers often lie);
