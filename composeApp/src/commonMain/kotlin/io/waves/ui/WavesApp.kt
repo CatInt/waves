@@ -125,7 +125,7 @@ class AppState(deps: AppDependencies, scope: kotlinx.coroutines.CoroutineScope) 
         hiddenFeeds = deps.library.showSettings.map { m -> m.values.filterNot { it.inHome }.mapTo(HashSet()) { it.feedUrl } }
             .distinctUntilChanged(),
     )
-    val history = HistoryState(deps.library, scope)
+    val history = HistoryState(deps.library, scope, downloads = deps.downloads?.downloads ?: flowOf(emptyList()))
     init {
         ListeningTracker(deps.player.state, deps.library, deps.deviceId, scope).start()
     }
@@ -209,6 +209,8 @@ fun WavesApp(deps: AppDependencies, app: AppState = remember(deps) { AppState(de
                     if (nav.content is Screen.Root && nav.currentTab != tab) nav.select(tab)
                 }
             }
+            // History's downloaded-only toggle is for a look, not a setting: it's off again once the tab is left.
+            LaunchedEffect(nav.currentTab) { if (nav.currentTab != Tab.History) app.history.showAll() }
             LaunchedEffect(nav.currentTab) {
                 val page = nav.currentTab.ordinal
                 if (pager.currentPage == page && pager.currentPageOffsetFraction == 0f) return@LaunchedEffect
