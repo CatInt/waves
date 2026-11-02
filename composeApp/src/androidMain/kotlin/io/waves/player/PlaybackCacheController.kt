@@ -171,7 +171,8 @@ class PlaybackCacheController(
             .setCache(cache)
             .setUpstreamDataSourceFactory(upstream)
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
-        mediaSourceFactory = DefaultMediaSourceFactory(RemoteCachingDataSource.Factory(caching, upstream))
+        val sources = RemoteCachingDataSource.Factory(caching, upstream)
+        mediaSourceFactory = HlsTolerantMediaSourceFactory(DefaultMediaSourceFactory(sources), sources)
         scope.launch {
             for (episode in reports) {
                 try {
