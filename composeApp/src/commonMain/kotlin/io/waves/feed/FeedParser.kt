@@ -16,7 +16,16 @@ object FeedParser {
      * @throws FeedParseException when the document contains no `<channel>`.
      */
     fun parse(feedUrl: String, xml: String): Feed {
-        val doc = XmlTree.parse(xml)
+        val seenGuids = HashSet<String>()
+        val episodes = ArrayList<Episode>()
+        val doc = XmlTree.parse(xml, consumeChildrenOf = "channel") { item ->
+            if (item.name != "item") return@parse false
+            parseEpisode(feedUrl, item)?.let { episode ->
+                // Keep the first occurrence of each guid, as the library keys episodes by (feedUrl, guid).
+                if (seenGuids.add(episode.guid)) episodes.add(episode)
+            }
+            true
+        }
         val channel = doc.find("channel")
             ?: throw FeedParseException("Not an RSS feed (no <channel>): $feedUrl")
 
@@ -34,28 +43,25 @@ object FeedParser {
             artworkUrl = channelArtwork,
         )
 
-        val seenGuids = HashSet<String>()
-        val episodes = channel.children("item").mapNotNull { item ->
-            val enclosure = item.children("enclosure").firstNotNullOfOrNull { it.attr("url") } ?: return@mapNotNull null
-            val title = item.childText("title") ?: item.childText("itunes:title") ?: ""
-            val guid = item.childText("guid")
-                ?: enclosure
-            // Feeds occasionally repeat guids; keep the first so the (feedUrl, guid) key stays unique.
-            if (!seenGuids.add(guid)) return@mapNotNull null
-            Episode(
-                guid = guid,
-                podcastFeedUrl = feedUrl,
-                title = title,
-                audioUrl = enclosure,
-                publishedAtEpochMs = FeedDates.parseDate(item.childText("pubDate") ?: item.childText("dc:date")),
-                durationSeconds = FeedDates.parseDuration(item.childText("itunes:duration")),
-                description = item.childText("description")
-                    ?: item.childText("content:encoded")
-                    ?: item.childText("itunes:summary"),
-                artworkUrl = item.child("itunes:image")?.attr("href"),
-            )
-        }
         return Feed(podcast, episodes)
+    }
+
+    private fun parseEpisode(feedUrl: String, item: XmlElement): Episode? {
+        val enclosure = item.children.firstNotNullOfOrNull {
+            if (it.name == "enclosure") it.attr("url") else null
+        } ?: return null
+        return Episode(
+            guid = item.childText("guid") ?: enclosure,
+            podcastFeedUrl = feedUrl,
+            title = item.childText("title") ?: item.childText("itunes:title") ?: "",
+            audioUrl = enclosure,
+            publishedAtEpochMs = FeedDates.parseDate(item.childText("pubDate") ?: item.childText("dc:date")),
+            durationSeconds = FeedDates.parseDuration(item.childText("itunes:duration")),
+            description = item.childText("description")
+                ?: item.childText("content:encoded")
+                ?: item.childText("itunes:summary"),
+            artworkUrl = item.child("itunes:image")?.attr("href"),
+        )
     }
 
     private fun XmlElement.attr(name: String): String? = attributes[name]?.trim()?.takeIf { it.isNotEmpty() }

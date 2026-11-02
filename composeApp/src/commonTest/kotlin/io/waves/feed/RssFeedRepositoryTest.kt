@@ -125,6 +125,19 @@ class RssFeedRepositoryTest {
     }
 
     @Test
+    fun decodingUsesOnlyTheFilledPartOfAReusableBuffer() {
+        val utf8 = "Café".encodeToByteArray()
+        val buffer = utf8 + ByteArray(100) { 'x'.code.toByte() }
+        assertEquals("Café", RssFeedRepository.decode(buffer, null, utf8.size))
+        assertEquals("", RssFeedRepository.decode(buffer, null, 0))
+
+        val bom = byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()) + utf8
+        assertEquals("Café", RssFeedRepository.decode(bom + ByteArray(100), null, bom.size))
+        assertEquals("Café", RssFeedRepository.decode(byteArrayOf(67, 97, 102, 0xE9.toByte(), 0), "latin1", 4))
+        assertFailsWith<IllegalArgumentException> { RssFeedRepository.decode(buffer, null, -1) }
+    }
+
+    @Test
     fun httpErrorThrowsFetchException() = runTest {
         val client = HttpClient(MockEngine { respond("gone", HttpStatusCode.NotFound) })
         assertFailsWith<FeedFetchException> { RssFeedRepository(client).fetch("https://x/feed") }

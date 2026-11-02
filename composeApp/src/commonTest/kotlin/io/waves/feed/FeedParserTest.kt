@@ -80,4 +80,25 @@ class FeedParserTest {
         assertFailsWith<FeedParseException> { FeedParser.parse("u", "<html><body>Not found</body></html>") }
         assertFailsWith<FeedParseException> { FeedParser.parse("u", "") }
     }
+
+    @Test
+    fun itemConsumptionPreservesNamespacesMixedContentAndLateMetadata() {
+        val xml = """<rss xmlns:p="http://www.itunes.com/dtds/podcast-1.0.dtd"><channel>
+            <item xmlns:q="http://www.itunes.com/dtds/podcast-1.0.dtd">
+                <guid>one</guid><title>First</title><q:duration>1:30</q:duration>
+                <description>before <b>bold</b> after <![CDATA[<item>not an item</item>]]></description>
+                <enclosure url="https://a/one.mp3"/>
+            </item>
+            <item><guid>two</guid><p:duration>2:00</p:duration><enclosure url="https://a/two.mp3"/></item>
+            <item><guid>one</guid><title>Duplicate</title><enclosure url="https://a/duplicate.mp3"/></item>
+            <title>Late title</title><p:author>Author</p:author>
+            </channel></rss>"""
+        val parsed = FeedParser.parse("u", xml)
+        assertEquals("Late title", parsed.podcast.title)
+        assertEquals("Author", parsed.podcast.author)
+        assertEquals(listOf("one", "two"), parsed.episodes.map { it.guid })
+        assertEquals(listOf(90L, 120L), parsed.episodes.map { it.durationSeconds })
+        assertEquals("First", parsed.episodes.first().title)
+        assertEquals("before bold after <item>not an item</item>", parsed.episodes.first().description)
+    }
 }

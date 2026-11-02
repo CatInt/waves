@@ -7,6 +7,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import io.waves.data.InMemoryFeedFetchLog
+import io.waves.data.LibraryRepository
 import io.waves.feed.FeedRepository
 import io.waves.model.EpisodeId
 import io.waves.model.Podcast
@@ -283,6 +284,30 @@ class FeedRefresherTest {
         assertEquals(listOf(emptySet()), absent)
         assertEquals(now, store.lastRefreshedAt("a"))
         assertNull(log.fetchedAt("a"), "show pages must still be able to load full history")
+    }
+
+    @Test
+    fun partialRefreshChecksOnlyReturnedEpisodesWithoutLoadingTheStoredBacklog() = runTest {
+        val existing = episode("a", "existing", now - hour)
+        val fresh = episode("a", "new", now - hour)
+        val feeds = FakeFeeds().apply {
+            this.feeds["a"] = listOf(existing, fresh)
+            isComplete = false
+        }
+        val stored = RefreshFakeLibrary(listOf(podcast("a")))
+        stored.upsertEpisodes("a", listOf(existing) + (1..20_000).map { episode("a", "old$it", now - 30 * day) })
+        val lookups = mutableListOf<EpisodeId>()
+        val library = object : LibraryRepository by stored {
+            override fun episodes(feedUrl: String) = error("Partial refresh must not load the full backlog")
+            override suspend fun episode(episodeId: EpisodeId) = stored.episode(episodeId).also { lookups += episodeId }
+        }
+
+        val result = FeedRefresher(feeds, library, clock = { now }).refreshAll()
+
+        assertTrue(result.failures.isEmpty())
+        assertEquals(listOf(existing.id, fresh.id), lookups)
+        assertEquals(listOf(fresh), result.updates.single().newEpisodes)
+        assertEquals(20_002, stored.stored.value["a"]!!.size)
     }
 
     @Test
