@@ -56,7 +56,7 @@ data class HomeUiState(
 /**
  * Home: a shelf of subscribed shows plus a personalised "Up next" list ranked by [UpNextRanking] (which also
  * carries every unplayed download), with
- * refresh-all (fetch every feed, upsert its episodes). Refreshes automatically once if subscriptions exist but
+ * refresh-all (fetch each feed's recent episodes, upsert them). Refreshes automatically once if subscriptions exist but
  * no episodes are stored yet (e.g. subscriptions that just arrived through sync).
  *
  * While [offline] is true, "Up next" keeps only episodes with a completed download or a fully cached file, and
@@ -209,9 +209,9 @@ class HomeState(
                                 try {
                                     val absent = withContext(workContext) {
                                         val known = library.episodes(podcast.feedUrl).first().mapTo(HashSet()) { it.guid }
-                                        val feed = feeds.fetch(podcast.feedUrl)
+                                        val feed = feeds.fetchLatest(podcast.feedUrl)
                                         library.upsertEpisodes(podcast.feedUrl, feed.episodes)
-                                        FeedRefresher.absentEpisodeIds(podcast.feedUrl, known, feed.episodes)
+                                        FeedRefresher.absentEpisodeIds(podcast.feedUrl, known, feed.episodes, feed.isComplete)
                                     }
                                     onEpisodesAbsent(absent)
                                     null
@@ -236,7 +236,7 @@ class HomeState(
 
     /** The show as its feed describes it, remembered in the library; null offline or when the feed can't be fetched. */
     private suspend fun fetchShow(feedUrl: String): Podcast? = if (offline.value) null else try {
-        feeds.fetch(feedUrl).podcast.copy(feedUrl = feedUrl).also { library.rememberPodcast(it) }
+        feeds.fetchLatest(feedUrl).podcast.copy(feedUrl = feedUrl).also { library.rememberPodcast(it) }
     } catch (e: CancellationException) {
         throw e
     } catch (_: Exception) {

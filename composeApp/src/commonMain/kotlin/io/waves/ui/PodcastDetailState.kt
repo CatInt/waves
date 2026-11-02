@@ -144,11 +144,11 @@ class PodcastDetailState(
         try {
             val known = library.episodes(url).first().mapTo(HashSet()) { it.guid }
             val feed = feeds.fetch(url)
-            recentFetches.record(url)
+            if (feed.isComplete) recentFetches.record(url)
             podcast.update { mergePodcast(it, feed.podcast) }
             fetched.value = feed.episodes
             library.upsertEpisodes(url, feed.episodes)
-            onEpisodesAbsent(FeedRefresher.absentEpisodeIds(url, known, feed.episodes))
+            onEpisodesAbsent(FeedRefresher.absentEpisodeIds(url, known, feed.episodes, feed.isComplete))
             // rememberPodcast leaves subscriptions alone, so a followed show's new cover would only reach Home and
             // the player after the next background refresh.
             if (subscribed.first()) library.updatePodcastMetadata(podcast.value) else library.rememberPodcast(podcast.value)
