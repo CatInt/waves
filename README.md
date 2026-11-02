@@ -47,6 +47,12 @@ Outputs: `composeApp/build/compose/binaries/{main,main-release}/{app/Waves.app,d
 (shared by both platforms; macOS requires a major version > 0). Builds without it are development builds
 (version `1.0.0`) that only check for updates when asked.
 
+## Feed refresh
+
+Home and background refresh read at most the first 128 KiB of ordinary RSS feeds and close the response even
+when a server ignores HTTP Range. Only complete items are stored; episodes outside that prefix keep their
+library entries and local audio. Opening a show loads its full feed history. YouTube feeds are fetched whole.
+
 ## Releases and in-app updates
 
 Push a tag to publish a release:

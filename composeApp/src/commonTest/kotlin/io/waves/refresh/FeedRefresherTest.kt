@@ -7,11 +7,13 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import io.waves.data.InMemoryFeedFetchLog
+import io.waves.feed.FeedRepository
 import io.waves.model.EpisodeId
 import io.waves.model.Podcast
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
@@ -257,6 +259,30 @@ class FeedRefresherTest {
         r.onEpisodesAbsent = { absent += it }
         r.refreshAll()
         assertEquals(listOf(emptySet()), absent)
+    }
+
+    @Test
+    fun partialRefreshPreservesOlderEpisodesAndDoesNotMarkFullHistoryFresh() = runTest {
+        val feeds = FakeFeeds().apply {
+            feeds["a"] = listOf(episode("a", "new", now - hour))
+            isComplete = false
+        }
+        val library = RefreshFakeLibrary(listOf(podcast("a")))
+        library.upsertEpisodes("a", listOf(episode("a", "older", now - 30 * day)))
+        val absent = mutableListOf<Set<EpisodeId>>()
+        val log = InMemoryFeedFetchLog()
+        val store = InMemoryRefreshStateStore()
+        val r = FeedRefresher(feeds, library, store, fetchLog = log, clock = { now })
+        r.onEpisodesAbsent = { absent += it }
+
+        val result = r.refreshAll()
+
+        assertEquals(listOf("a" to FeedRepository.LATEST_BYTES), feeds.latestRequests)
+        assertEquals(listOf("new"), result.updates.single().newEpisodes.map { it.guid })
+        assertEquals(setOf("older", "new"), library.stored.value["a"]!!.map { it.guid }.toSet())
+        assertEquals(listOf(emptySet()), absent)
+        assertEquals(now, store.lastRefreshedAt("a"))
+        assertNull(log.fetchedAt("a"), "show pages must still be able to load full history")
     }
 
     @Test

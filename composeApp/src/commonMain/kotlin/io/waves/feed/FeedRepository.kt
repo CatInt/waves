@@ -3,7 +3,12 @@ package io.waves.feed
 import io.waves.model.Episode
 import io.waves.model.Podcast
 
-data class Feed(val podcast: Podcast, val episodes: List<Episode>)
+data class Feed(
+    val podcast: Podcast,
+    val episodes: List<Episode>,
+    /** False when only a prefix was read; unlisted episodes must not be treated as removed. */
+    val isComplete: Boolean = true,
+)
 
 /** Fetches and parses RSS feeds. */
 interface FeedRepository {

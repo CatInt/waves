@@ -11,6 +11,7 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.withContext
 
 /** Thrown when a feed cannot be downloaded. */
@@ -44,6 +45,7 @@ class RssFeedRepository(private val client: HttpClient) : FeedRepository {
      * it all), then parses the items read in full; the rest of the download is dropped unread.
      */
     override suspend fun fetchLatest(feedUrl: String, maxBytes: Int): Feed {
+        require(maxBytes > 0) { "maxBytes must be positive" }
         val (bytes, charset) = try {
             client.prepareGet(feedUrl) {
                 header(HttpHeaders.UserAgent, USER_AGENT)
@@ -51,19 +53,26 @@ class RssFeedRepository(private val client: HttpClient) : FeedRepository {
                 header(HttpHeaders.Range, "bytes=0-${maxBytes - 1}")
                 // A range of compressed bytes wouldn't decompress on its own.
                 header(HttpHeaders.AcceptEncoding, "identity")
+                // HttpCache otherwise buffers the entire response, even for a streaming request.
+                header(HttpHeaders.CacheControl, "no-cache, no-store")
             }.execute { response ->
                 if (!response.status.isSuccess()) {
                     throw FeedFetchException("Failed to download $feedUrl: HTTP ${response.status.value}")
                 }
                 val channel = response.bodyAsChannel()
-                val buffer = ByteArray(maxBytes)
-                var read = 0
-                while (read < maxBytes) {
-                    val n = channel.readAvailable(buffer, read, maxBytes - read)
-                    if (n <= 0) break
-                    read += n
+                try {
+                    val buffer = ByteArray(maxBytes)
+                    var read = 0
+                    while (read < maxBytes) {
+                        val n = channel.readAvailable(buffer, read, maxBytes - read)
+                        if (n < 0) break
+                        read += n
+                    }
+                    buffer.copyOf(read) to response.contentType()?.parameter("charset")
+                } finally {
+                    channel.cancel(null)
+                    response.coroutineContext.cancel()
                 }
-                buffer.copyOf(read) to response.contentType()?.parameter("charset")
             }
         } catch (e: FeedFetchException) {
             throw e
@@ -71,7 +80,11 @@ class RssFeedRepository(private val client: HttpClient) : FeedRepository {
             if (e is kotlinx.coroutines.CancellationException) throw e
             throw FeedFetchException("Failed to download $feedUrl: ${e.message}", e)
         }
-        return withContext(Dispatchers.Default) { FeedParser.parse(feedUrl, closeAfterLastItem(decode(bytes, charset))) }
+        return withContext(Dispatchers.Default) {
+            val xml = decode(bytes, charset)
+            val closed = closeAfterLastItem(xml)
+            FeedParser.parse(feedUrl, closed).copy(isComplete = closed == xml)
+        }
     }
 
     internal companion object {
@@ -85,7 +98,7 @@ class RssFeedRepository(private val client: HttpClient) : FeedRepository {
             val rss = xml.lastIndexOf("</item>")
             val atom = xml.lastIndexOf("</entry>")
             return when {
-                xml.trimEnd().endsWith(">") && (xml.contains("</rss>") || xml.contains("</feed>")) -> xml
+                xml.trimEnd().endsWith("</rss>") || xml.trimEnd().endsWith("</feed>") -> xml
                 rss >= 0 && rss > atom -> xml.substring(0, rss + "</item>".length) + "</channel></rss>"
                 atom >= 0 -> xml.substring(0, atom + "</entry>".length) + "</feed>"
                 // Not even one item read: just the channel's opening, which says nothing of its episodes.

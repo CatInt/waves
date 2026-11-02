@@ -27,7 +27,7 @@ import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * Re-fetches subscribed feeds and stores their episodes, reporting which episodes are new.
+ * Fetches subscribed feeds' recent episodes and stores them, reporting which episodes are new.
  *
  * An episode is *new* when its guid was not in the library before this refresh AND it was published after the
  * feed's previous successful refresh (minus [lateArrivalSlack], since feeds often appear on the CDN a while after
@@ -41,7 +41,7 @@ class FeedRefresher(
     private val feeds: FeedRepository,
     private val library: LibraryRepository,
     private val stateStore: RefreshStateStore = InMemoryRefreshStateStore(),
-    /** Also told of each successful fetch, so show pages opened soon after don't fetch the feed again. */
+    /** Complete fetches only, so a recent prefix doesn't prevent a show page from loading its full history. */
     private val fetchLog: FeedFetchLog? = null,
     private val concurrency: Int = 4,
     private val perFeedTimeout: Duration = 30.seconds,
@@ -59,8 +59,8 @@ class FeedRefresher(
     private val mutex = Mutex()
 
     /**
-     * Episodes that were stored for a feed and are missing from a successful, non-empty fetch.
-     * An empty fetch reports nothing, so a broken parse cannot wipe local audio.
+     * Episodes that were stored for a feed and are missing from a successful, complete, non-empty fetch.
+     * Empty or partial fetches report nothing, so unread episodes cannot lose local audio.
      */
     @Volatile
     var onEpisodesAbsent: ((Set<EpisodeId>) -> Unit)? = null
@@ -118,7 +118,7 @@ class FeedRefresher(
         val feedUrl = podcast.feedUrl
         return try {
             val fetchedAt = clock()
-            val feed = withTimeoutOrNull(perFeedTimeout) { feeds.fetch(feedUrl) }
+            val feed = withTimeoutOrNull(perFeedTimeout) { feeds.fetchLatest(feedUrl) }
                 ?: return Outcome.Failed(FeedFailure(feedUrl, "Timed out after $perFeedTimeout"))
             val episodes = feed.episodes.map { if (it.podcastFeedUrl == feedUrl) it else it.copy(podcastFeedUrl = feedUrl) }
             val known = library.episodes(feedUrl).first().mapTo(HashSet()) { it.guid }
@@ -128,9 +128,9 @@ class FeedRefresher(
             val fresh = newEpisodes(episodes, known, cutoff)
 
             library.upsertEpisodes(feedUrl, episodes)
-            onEpisodesAbsent?.invoke(absentEpisodeIds(feedUrl, known, episodes))
+            onEpisodesAbsent?.invoke(absentEpisodeIds(feedUrl, known, episodes, feed.isComplete))
             stateStore.setLastRefreshedAt(feedUrl, fetchedAt)
-            fetchLog?.record(feedUrl, fetchedAt)
+            if (feed.isComplete) fetchLog?.record(feedUrl, fetchedAt)
 
             val display = mergeMetadata(podcast, feed.podcast)
             if (display != podcast) library.updatePodcastMetadata(display)
@@ -155,11 +155,16 @@ class FeedRefresher(
         )
 
         /**
-         * Guids that were stored and are missing from [fetched]. An empty fetch returns nothing: a feed that
-         * failed to list its episodes must not be treated as having removed them.
+         * Guids that were stored and are missing from [fetched]. Empty or incomplete fetches return nothing:
+         * a feed that hasn't listed all its episodes must not be treated as having removed them.
          */
-        fun absentEpisodeIds(feedUrl: String, knownGuids: Set<String>, fetched: List<Episode>): Set<EpisodeId> {
-            if (fetched.isEmpty()) return emptySet()
+        fun absentEpisodeIds(
+            feedUrl: String,
+            knownGuids: Set<String>,
+            fetched: List<Episode>,
+            isComplete: Boolean = true,
+        ): Set<EpisodeId> {
+            if (!isComplete || fetched.isEmpty()) return emptySet()
             val stillThere = fetched.mapTo(HashSet()) { it.guid }
             return (knownGuids - stillThere).mapTo(HashSet()) { EpisodeId(feedUrl, it) }
         }

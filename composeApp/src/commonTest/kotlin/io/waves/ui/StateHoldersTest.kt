@@ -5,6 +5,7 @@ import io.waves.download.DownloadStatus
 import io.waves.download.DownloadInfo
 import io.waves.data.normalizeRegion
 import io.waves.feed.Feed
+import io.waves.feed.FeedRepository
 import io.waves.model.EpisodeId
 import io.waves.model.HistoryEntry
 import io.waves.model.PlaybackProgress
@@ -390,6 +391,36 @@ class PodcastDetailStateTest {
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class HomeStateTest {
+    @Test
+    fun refreshReadsOnlyRecentEpisodesAndPreservesUnlistedHistory() = runTest {
+        val library = InMemoryLibraryRepository()
+        library.subscribe(podcastA)
+        val older = episode(podcastA, 1)
+        val recent = episode(podcastA, 2)
+        library.upsertEpisodes(podcastA.feedUrl, listOf(older))
+        val requests = mutableListOf<Pair<String, Int>>()
+        val feeds = object : FeedRepository {
+            override suspend fun fetch(feedUrl: String): Feed = error("Home must not fetch the full feed")
+            override suspend fun fetchLatest(feedUrl: String, maxBytes: Int): Feed {
+                requests += feedUrl to maxBytes
+                return Feed(podcastA, listOf(recent), isComplete = false)
+            }
+        }
+        val absent = mutableListOf<Set<EpisodeId>>()
+        val home = HomeState(
+            library, feeds, backgroundScope, onEpisodesAbsent = { absent += it }, workContext = EmptyCoroutineContext,
+        )
+        settle()
+        home.refreshAll()
+        settle()
+
+        assertEquals(listOf(podcastA.feedUrl to FeedRepository.LATEST_BYTES), requests)
+        assertEquals(setOf(older.id, recent.id), library.episodes(podcastA.feedUrl).first().map { it.id }.toSet())
+        assertEquals(listOf(emptySet()), absent)
+        assertNull(home.state.value.error)
+        assertFalse(home.state.value.refreshing)
+    }
+
     @Test
     fun refreshAllFetchesEverySubscriptionAndReportsFailures() = runTest {
         val library = InMemoryLibraryRepository()

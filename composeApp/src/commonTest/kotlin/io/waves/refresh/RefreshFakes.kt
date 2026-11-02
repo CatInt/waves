@@ -58,6 +58,13 @@ class FakeFeeds : FeedRepository {
     val channels = mutableMapOf<String, Podcast>()
     var behavior: suspend (String) -> Unit = {}
     var fetches = 0
+    val latestRequests = mutableListOf<Pair<String, Int>>()
+    var isComplete = true
+
+    override suspend fun fetchLatest(feedUrl: String, maxBytes: Int): Feed {
+        latestRequests += feedUrl to maxBytes
+        return fetch(feedUrl).copy(isComplete = isComplete)
+    }
 
     override suspend fun fetch(feedUrl: String): Feed {
         fetches++
