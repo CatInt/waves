@@ -52,6 +52,8 @@ Outputs: `composeApp/build/compose/binaries/{main,main-release}/{app/Waves.app,d
 Home and background refresh read at most the first 128 KiB of ordinary RSS feeds and close the response even
 when a server ignores HTTP Range. Only complete items are stored; episodes outside that prefix keep their
 library entries and local audio. Opening a show loads its full feed history. YouTube feeds are fetched whole.
+RSS items are converted and released one at a time during parsing, rather than retaining a full episode XML tree.
+Partial background refreshes check only the returned episodes against the library instead of loading its backlog.
 
 ## Releases and in-app updates
 

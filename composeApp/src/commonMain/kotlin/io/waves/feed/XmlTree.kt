@@ -14,7 +14,8 @@ internal class XmlElement(
     val name: String,
     val attributes: Map<String, String>,
 ) {
-    val children = mutableListOf<XmlElement>()
+    private var childElements: MutableList<XmlElement>? = null
+    val children: List<XmlElement> get() = childElements.orEmpty()
 
     /** Ordered mixed content: [String] text runs and child [XmlElement]s. */
     private val content = mutableListOf<Any>()
@@ -22,18 +23,31 @@ internal class XmlElement(
     internal fun appendText(text: CharSequence) {
         if (text.isEmpty()) return
         val last = content.lastOrNull()
-        if (last is StringBuilder) last.append(text) else content.add(StringBuilder(text))
+        when (last) {
+            is StringBuilder -> last.append(text)
+            is String -> content[content.lastIndex] = StringBuilder(last).append(text)
+            else -> content.add(text.toString())
+        }
     }
 
     internal fun appendChild(element: XmlElement) {
+        val children = childElements ?: mutableListOf<XmlElement>().also { childElements = it }
         children.add(element)
         content.add(element)
+    }
+
+    internal fun removeLastChild(element: XmlElement) {
+        val children = checkNotNull(childElements)
+        check(children.last() === element && content.last() === element)
+        children.removeAt(children.lastIndex)
+        content.removeAt(content.lastIndex)
     }
 
     /** Text of this element and all descendants, in document order (tags of unescaped HTML are dropped). */
     val text: String
         get() = when {
             content.isEmpty() -> ""
+            content.size == 1 && content[0] is String -> content[0].toString()
             content.size == 1 && content[0] is StringBuilder -> content[0].toString()
             else -> buildString { appendTextTo(this) }
         }
@@ -66,18 +80,37 @@ internal object XmlTree {
         "http://search.yahoo.com/mrss/" to "media",
     )
 
-    private class Frame(val element: XmlElement, val rawName: String, val namespaces: Map<String, String>)
+    private class Frame(
+        val element: XmlElement,
+        val rawName: String,
+        val namespaces: Map<String, String>,
+        val selfClosing: Boolean = false,
+    )
 
-    /** Parses [xml] and returns a synthetic document root whose children are the top-level elements. */
-    fun parse(xml: String): XmlElement {
+    /**
+     * Parses [xml] into a synthetic document root. For the first [consumeChildrenOf] element, completed direct
+     * children for which [consumeChild] returns true are released instead of retained in the tree.
+     */
+    fun parse(
+        xml: String,
+        consumeChildrenOf: String? = null,
+        consumeChild: (XmlElement) -> Boolean = { false },
+    ): XmlElement {
         val root = XmlElement("#document", emptyMap())
         val stack = ArrayList<Frame>()
         stack.add(Frame(root, "#document", emptyMap()))
         val s = xml
         val n = s.length
         var i = if (s.startsWith('﻿')) 1 else 0
+        var streamingParent: XmlElement? = null
 
         fun current() = stack.last().element
+
+        fun closeLast() {
+            val element = stack.removeAt(stack.lastIndex).element
+            val parent = current()
+            if (parent === streamingParent && consumeChild(element)) parent.removeLastChild(element)
+        }
 
         while (i < n) {
             val c = s[i]
@@ -107,11 +140,13 @@ internal object XmlTree {
                     val end = s.indexOf('>', i + 2).let { if (it < 0) n else it }
                     val rawName = s.substring(i + 2, end).trim()
                     val idx = stack.indexOfLast { it.rawName == rawName }
-                    if (idx > 0) while (stack.size > idx) stack.removeAt(stack.size - 1)
+                    if (idx > 0) while (stack.size > idx) closeLast()
                     i = if (end >= n) n else end + 1
                 }
                 i + 1 < n && isNameStart(s[i + 1]) -> {
                     i = parseStartTag(s, i, stack)
+                    if (streamingParent == null && current().name == consumeChildrenOf) streamingParent = current()
+                    if (stack.last().selfClosing) closeLast()
                 }
                 else -> {
                     // Stray '<' — keep it as text.
@@ -120,6 +155,7 @@ internal object XmlTree {
                 }
             }
         }
+        while (stack.size > 1) closeLast()
         return root
     }
 
@@ -143,7 +179,7 @@ internal object XmlTree {
         val nameStart = i
         while (i < n && isNameChar(s[i])) i++
         val rawName = s.substring(nameStart, i)
-        val attrs = LinkedHashMap<String, String>()
+        var attrs: MutableMap<String, String>? = null
         var selfClosing = false
         while (i < n) {
             val c = s[i]
@@ -173,18 +209,21 @@ internal object XmlTree {
                             value = decodeEntities(s, vStart, i)
                         }
                     }
-                    attrs[aName] = value
+                    val attributes = attrs ?: LinkedHashMap<String, String>().also { attrs = it }
+                    attributes[aName] = value
                 }
                 else -> i++
             }
         }
 
         val parentNs = stack.last().namespaces
-        val declared = attrs.filterKeys { it.startsWith("xmlns:") }
-        val namespaces = if (declared.isEmpty()) parentNs else parentNs + declared.mapKeys { it.key.substringAfter(':') }
-        val element = XmlElement(canonicalName(rawName, namespaces), attrs)
+        val attributes = attrs.orEmpty()
+        val namespaces = if (attributes.keys.none { it.startsWith("xmlns:") }) parentNs else {
+            parentNs + attributes.filterKeys { it.startsWith("xmlns:") }.mapKeys { it.key.substringAfter(':') }
+        }
+        val element = XmlElement(canonicalName(rawName, namespaces), attributes)
         stack.last().element.appendChild(element)
-        if (!selfClosing) stack.add(Frame(element, rawName, namespaces))
+        stack.add(Frame(element, rawName, namespaces, selfClosing))
         return i
     }
 

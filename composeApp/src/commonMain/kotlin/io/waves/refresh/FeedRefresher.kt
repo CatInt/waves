@@ -121,7 +121,13 @@ class FeedRefresher(
             val feed = withTimeoutOrNull(perFeedTimeout) { feeds.fetchLatest(feedUrl) }
                 ?: return Outcome.Failed(FeedFailure(feedUrl, "Timed out after $perFeedTimeout"))
             val episodes = feed.episodes.map { if (it.podcastFeedUrl == feedUrl) it else it.copy(podcastFeedUrl = feedUrl) }
-            val known = library.episodes(feedUrl).first().mapTo(HashSet()) { it.guid }
+            val known = if (feed.isComplete) {
+                library.episodes(feedUrl).first().mapTo(HashSet()) { it.guid }
+            } else {
+                episodes.mapNotNullTo(HashSet()) { episode ->
+                    episode.guid.takeIf { library.episode(episode.id) != null }
+                }
+            }
             val last = stateStore.lastRefreshedAt(feedUrl)
             val cutoff = if (last == null) fetchedAt - firstRefreshWindow.inWholeMilliseconds
             else last - lateArrivalSlack.inWholeMilliseconds
@@ -172,9 +178,11 @@ class FeedRefresher(
         /** Pure "new episode" rule; [cutoffEpochMs] is exclusive. Result is newest first. */
         fun newEpisodes(fetched: List<Episode>, knownGuids: Set<String>, cutoffEpochMs: Long): List<Episode> =
             fetched
+                .asSequence()
                 .filter { it.guid !in knownGuids }
                 .filter { (it.publishedAtEpochMs ?: Long.MIN_VALUE) > cutoffEpochMs }
                 .distinctBy { it.guid }
                 .sortedByDescending { it.publishedAtEpochMs }
+                .toList()
     }
 }

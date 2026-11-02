@@ -208,8 +208,10 @@ class HomeState(
                             gate.withPermit {
                                 try {
                                     val absent = withContext(workContext) {
-                                        val known = library.episodes(podcast.feedUrl).first().mapTo(HashSet()) { it.guid }
                                         val feed = feeds.fetchLatest(podcast.feedUrl)
+                                        val known = if (feed.isComplete) {
+                                            library.episodes(podcast.feedUrl).first().mapTo(HashSet()) { it.guid }
+                                        } else emptySet()
                                         library.upsertEpisodes(podcast.feedUrl, feed.episodes)
                                         FeedRefresher.absentEpisodeIds(podcast.feedUrl, known, feed.episodes, feed.isComplete)
                                     }

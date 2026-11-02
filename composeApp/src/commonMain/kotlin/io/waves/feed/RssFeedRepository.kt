@@ -46,7 +46,7 @@ class RssFeedRepository(private val client: HttpClient) : FeedRepository {
      */
     override suspend fun fetchLatest(feedUrl: String, maxBytes: Int): Feed {
         require(maxBytes > 0) { "maxBytes must be positive" }
-        val (bytes, charset) = try {
+        val (bytes, length, charset) = try {
             client.prepareGet(feedUrl) {
                 header(HttpHeaders.UserAgent, USER_AGENT)
                 header(HttpHeaders.Accept, "application/rss+xml, application/xml;q=0.9, text/xml;q=0.9, */*;q=0.8")
@@ -68,7 +68,7 @@ class RssFeedRepository(private val client: HttpClient) : FeedRepository {
                         if (n < 0) break
                         read += n
                     }
-                    buffer.copyOf(read) to response.contentType()?.parameter("charset")
+                    Triple(buffer, read, response.contentType()?.parameter("charset"))
                 } finally {
                     channel.cancel(null)
                     response.coroutineContext.cancel()
@@ -81,7 +81,7 @@ class RssFeedRepository(private val client: HttpClient) : FeedRepository {
             throw FeedFetchException("Failed to download $feedUrl: ${e.message}", e)
         }
         return withContext(Dispatchers.Default) {
-            val xml = decode(bytes, charset)
+            val xml = decode(bytes, charset, length)
             val closed = closeAfterLastItem(xml)
             FeedParser.parse(feedUrl, closed).copy(isComplete = closed == xml)
         }
@@ -110,21 +110,22 @@ class RssFeedRepository(private val client: HttpClient) : FeedRepository {
          * Decodes feed bytes. The XML declaration's encoding wins over the HTTP charset (servers often lie);
          * only UTF-8 and Latin-1/Windows-1252 are distinguished, which covers practically all podcast feeds.
          */
-        fun decode(bytes: ByteArray, httpCharset: String?): String {
-            if (bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()) {
-                return bytes.decodeToString(3, bytes.size)
+        fun decode(bytes: ByteArray, httpCharset: String?, length: Int = bytes.size): String {
+            require(length in 0..bytes.size) { "length must be within the byte array" }
+            if (length >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()) {
+                return bytes.decodeToString(3, length)
             }
-            val head = buildString { for (i in 0 until minOf(bytes.size, 200)) append((bytes[i].toInt() and 0xFF).toChar()) }
-            val declared = Regex("""<\?xml[^>]*encoding\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
-                .find(head)?.groupValues?.get(1)
+            val head = buildString { for (i in 0 until minOf(length, 200)) append((bytes[i].toInt() and 0xFF).toChar()) }
+            val declared = encodingDeclaration.find(head)?.groupValues?.get(1)
             val charset = (declared ?: httpCharset ?: "utf-8").trim().lowercase()
             return if (charset in latin1Names) {
-                CharArray(bytes.size) { (bytes[it].toInt() and 0xFF).toChar() }.concatToString()
+                buildString(length) { for (i in 0 until length) append((bytes[i].toInt() and 0xFF).toChar()) }
             } else {
-                bytes.decodeToString()
+                bytes.decodeToString(0, length)
             }
         }
 
+        private val encodingDeclaration = Regex("""<\?xml[^>]*encoding\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
         private val latin1Names = setOf("iso-8859-1", "iso8859-1", "latin1", "latin-1", "windows-1252", "cp1252", "us-ascii")
     }
 }
