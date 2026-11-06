@@ -11,6 +11,8 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.ScrollWheel
+import kotlinx.coroutines.flow.MutableStateFlow
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.test.performMouseInput
 import androidx.compose.ui.test.isSelected
 import androidx.compose.ui.test.swipeDown
@@ -170,6 +172,54 @@ class WavesAppUiTest {
         }
         mainClock.advanceTimeBy(1_000)
         waitFor("Discover selected") { onAllNodes(navTab("Discover") and isSelected()).fetchSemanticsNodes().isNotEmpty() }
+    }
+
+    @Test
+    fun restingFingersHoldATabSwipeUntilTheyLift() = runComposeUiTest {
+        val gesture = MutableStateFlow(WheelGesture.Touching)
+        setContent { CompositionLocalProvider(LocalWheelGesture provides gesture) { App(fakeDependencies(playerTickMs = 60 * 60 * 1000L)) } }
+        waitForText("No subscriptions yet")
+
+        // Past the turning point, then the fingers rest: the page stays where they left it.
+        onNodeWithText("No subscriptions yet").performMouseInput {
+            moveTo(center)
+            repeat(60) { scroll(0.5f, ScrollWheel.Horizontal) }
+        }
+        mainClock.advanceTimeBy(1_000)
+        onNode(navTab("Home") and isSelected()).assertExists()
+
+        // Lifted, it turns.
+        gesture.value = WheelGesture.Lifted
+        mainClock.advanceTimeBy(1_000)
+        waitFor("Discover selected") { onAllNodes(navTab("Discover") and isSelected()).fetchSemanticsNodes().isNotEmpty() }
+    }
+
+    @Test
+    fun restingFingersHoldThePlayerSheetUntilTheyLift() = runComposeUiTest {
+        val gesture = MutableStateFlow(WheelGesture.Touching)
+        val deps = fakeDependencies(playerTickMs = 60 * 60 * 1000L)
+        val app = AppState(deps, deps.appScope)
+        setContent { CompositionLocalProvider(LocalWheelGesture provides gesture) { App(deps, app) } }
+
+        onNode(navTab("Discover")).performClick()
+        waitForText("Slow Radio")
+        onAllNodes(named("Slow Radio")).onFirst().performClick()
+        waitForText("Slow Radio: Episode 1")
+        onAllNodesWithContentDescription("Play").onFirst().performClick()
+        waitFor("mini player") { onAllNodesWithTag(MINI_PLAYER_TAG).fetchSemanticsNodes().isNotEmpty() }
+
+        onNodeWithTag(MINI_PLAYER_TAG).performMouseInput {
+            moveTo(center)
+            repeat(50) { scroll(1f) }
+        }
+        // Fingers resting: the sheet is held part way, not opened.
+        mainClock.advanceTimeBy(1_000)
+        Thread.sleep(300) // the sheet's own pause rule counts real time; it must not let go either
+        mainClock.advanceTimeBy(1_000)
+        assertTrue(app.navigator.current != Screen.NowPlaying, "still held")
+
+        gesture.value = WheelGesture.Lifted
+        waitFor("opened") { app.navigator.current == Screen.NowPlaying }
     }
 
     @Test
