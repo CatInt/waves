@@ -8,6 +8,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
 
@@ -44,6 +45,27 @@ class ResponseCacheTest {
         assertEquals("new", fetch(ttl = Duration.ZERO) { "new" })
         assertEquals("new", fetch(ttl = Duration.ZERO) { error("offline") })
         assertFailsWith<IllegalStateException> { fetch(ttl = Duration.ZERO, staleOnError = false) { error("offline") } }
+    }
+
+    @Test fun memoryHoldsNoMoreThanItsBudgetAndDropsTheLeastRecentlyUsedFirst() = runBlocking<Unit> {
+        val chunk = "x".repeat(ResponseCache.MEMORY_ENTRY_CHARS)
+        val many = ResponseCache.MEMORY_CHARS / chunk.length + 4
+        repeat(many) { fetch("k$it") { chunk } }
+        val (entries, chars) = ResponseCache.memoryFootprint()
+        assertTrue(chars <= ResponseCache.MEMORY_CHARS, "$chars characters held")
+        assertEquals(ResponseCache.MEMORY_CHARS / chunk.length, entries)
+        // The first ones went out of memory but not off disk: answered without asking again.
+        assertEquals(chunk, fetch("k0") { error("must come from disk") })
+        assertEquals(many, calls)
+    }
+
+    @Test fun anAnswerTooBigForMemoryIsServedFromDisk() = runBlocking<Unit> {
+        val big = "y".repeat(ResponseCache.MEMORY_ENTRY_CHARS + 1)
+        fetch("small") { "s" }
+        assertEquals(big, fetch("big") { big })
+        assertEquals(1 to 1L, ResponseCache.memoryFootprint(), "only the small one in memory")
+        assertEquals(big, fetch("big") { error("must come from disk") })
+        assertEquals(2, calls)
     }
 
     @Test fun keysAreKeptApart() = runBlocking<Unit> {
