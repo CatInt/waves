@@ -45,7 +45,9 @@ composeApp/src/
 Outputs: `composeApp/build/compose/binaries/{main,main-release}/{app/Waves.app,dmg/Waves-<version>.dmg}` and
 `composeApp/build/outputs/apk/release/composeApp-release.apk`. The version comes from `-Pwaves.version=1.2.3`
 (shared by both platforms; macOS requires a major version > 0). Builds without it are development builds
-(version `1.0.0`) that only check for updates when asked.
+(version `1.0.0`) that only check for updates when asked. On the Mac they're named `Waves Dev`
+(`Waves Dev.app`, bundle ID `io.waves.desktop.dev`) and wear the Android debug icon's dark "DEV" ribbon in the window's corner and on the menu
+bar item, so they can't be mistaken for the installed app.
 
 ## Feed refresh
 

@@ -1,6 +1,10 @@
 package io.waves
 
 import androidx.compose.runtime.CompositionLocalProvider
+import io.waves.ui.DevRibbon
+import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -124,9 +128,13 @@ fun main() {
             },
         ) {
             LaunchedEffect(window) { mainWindow = window }
-            session?.let { s ->
-                if (wheelGesture == null) App(s.deps, s.state)
-                else CompositionLocalProvider(LocalWheelGesture provides wheelGesture) { App(s.deps, s.state) }
+            Box(Modifier.fillMaxSize()) {
+                session?.let { s ->
+                    if (wheelGesture == null) App(s.deps, s.state)
+                    else CompositionLocalProvider(LocalWheelGesture provides wheelGesture) { App(s.deps, s.state) }
+                }
+                // A development build says so, over every screen.
+                if (!BuildInfo.IS_RELEASE) DevRibbon()
             }
         }
         session?.let { s ->
