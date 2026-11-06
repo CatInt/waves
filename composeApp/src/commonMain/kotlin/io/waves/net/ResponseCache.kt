@@ -23,11 +23,20 @@ import kotlin.time.Duration.Companion.days
  * Off until [install]ed with a directory (the app does at start); tests never turn it on, so their responses can't
  * leak from one test into the next. Entries untouched for [KEEP] are dropped at install.
  *
+ * The most recently used answers are also held in memory, up to [MEMORY_CHARS] in all; one bigger than
+ * [MEMORY_ENTRY_CHARS] (a genre chart, a YouTube page) is read from disk each time instead, so a few of them can't
+ * crowd out the rest or weigh on a phone's heap.
+ *
  * Not for what must always be current or is private: sync, sign-in, and audio (whose downloaded files are their cache).
  */
 object ResponseCache {
     private val KEEP = 30.days
-    private const val MEMORY_ENTRIES = 64
+
+    /** All the answers held in memory together, in characters: about 2 MB at most (two bytes a character). */
+    internal const val MEMORY_CHARS = 1_000_000
+
+    /** Answers longer than this aren't held in memory at all. */
+    internal const val MEMORY_ENTRY_CHARS = 128_000
 
     private class Entry(val at: Long, val body: String)
 
@@ -35,6 +44,7 @@ object ResponseCache {
     private var dir: Path? = null
     private val lock = Mutex()
     private val memory = LinkedHashMap<String, Entry>()
+    private var memoryChars = 0L
     private val fs = SystemFileSystem
 
     /** Turns the cache on, in [directory] (created if need be), and drops entries older than [KEEP]. */
@@ -104,12 +114,23 @@ object ResponseCache {
         }
     }
 
-    /** Call with [lock] held: most recently used last, the oldest dropped past [MEMORY_ENTRIES]. */
+    /**
+     * Call with [lock] held: most recently used last, the oldest dropped once all of them come to more than
+     * [MEMORY_CHARS]. One longer than [MEMORY_ENTRY_CHARS] isn't kept (and replaces none it would have shadowed).
+     */
     private fun remember(key: String, entry: Entry) {
-        memory.remove(key)
+        memory.remove(key)?.let { memoryChars -= it.body.length }
+        if (entry.body.length > MEMORY_ENTRY_CHARS) return
         memory[key] = entry
-        while (memory.size > MEMORY_ENTRIES) memory.remove(memory.keys.first())
+        memoryChars += entry.body.length
+        while (memoryChars > MEMORY_CHARS) {
+            val oldest = memory.keys.first()
+            memoryChars -= memory.remove(oldest)!!.body.length
+        }
     }
+
+    /** How many answers are held in memory, and their characters (tests). */
+    internal suspend fun memoryFootprint(): Pair<Int, Long> = lock.withLock { memory.size to memoryChars }
 
     /** 64-bit FNV-1a of [key] in hex: short, file-name safe, and checked against the key kept inside. */
     private fun fileName(key: String): String {
@@ -125,5 +146,6 @@ object ResponseCache {
     internal fun uninstall() {
         dir = null
         memory.clear()
+        memoryChars = 0
     }
 }
