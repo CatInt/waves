@@ -320,6 +320,8 @@ fun PodcastScreen(
                         downloadControl = downloads?.let { d -> { m -> DownloadButton(row.episode, d, m, compact = true, played = row.played) } },
                         divider = index > 0 || !gapDivider,
                         dividerBelow = index < ui.episodes.lastIndex,
+                        // The first row sits right under the pull gap's divider: its ripple reaches up to the line.
+                        dividerAbove = index == 0 && gapDivider,
                         onToggleComplete = onSetCompleted?.let { { it(row.episode, !row.played) } },
                         modifier = shown,
                         snapGuides = guides,

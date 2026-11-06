@@ -96,8 +96,8 @@ private val SideCoverTop = 2.dp
  * @param showDescription false in narrow lists (the menu bar panel) to keep rows short.
  * @param divider draws a hairline above the row; lists pass false for their first row.
  * @param dividerBelow whether the next row draws a divider, so the press ripple reaches down to it.
- * @param dividerAbove whether the row sits right under a [ListDivider] that stays put (a first row under a pinned
- *   shelf), so the press ripple reaches up to it.
+ * @param dividerAbove whether the row sits right under a divider it doesn't draw itself (a first row under a pinned
+ *   shelf's [ListDivider], or under the show page's pull gap), so the press ripple reaches up to it and follows it.
  * @param onToggleComplete after the download control: marks the episode complete; hidden once it's played.
  */
 @Composable
@@ -313,8 +313,10 @@ internal fun Modifier.topDivider(show: Boolean, tint: () -> Float = { 0f }): Mod
 /**
  * Clickable whose press ripple is clipped to the zigzag dividers around the row: its top edge follows the row's own
  * divider ([top]) and, with [bottom], it reaches past the row's bottom to follow the next row's divider, so
- * neighbouring ripples meet along the line. With [above] (and no divider of its own) it reaches up under a
- * [ListDivider] just above the row, whose [BelowListDivider] clip cuts it to the line. Only the row itself takes taps.
+ * neighbouring ripples meet along the line. With [above] (and no divider of its own) it reaches up under a divider
+ * just above the row, one a list draws over its top ([ListDivider]) or one in the item before, and its top edge
+ * follows that divider's zigzag, so it meets the line whether or not anything clips the list to it. Only the row
+ * itself takes taps.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -322,7 +324,7 @@ internal fun Modifier.zigzagClickable(top: Boolean, bottom: Boolean, above: Bool
     val interaction = remember { MutableInteractionSource() }
     val reach = if (bottom) ListDividerHeight else 0.dp
     val rise = if (above) ListDividerHeight else 0.dp
-    val shape = remember(top, reach) { ZigzagEdgesShape(top, reach) }
+    val shape = remember(top, above, reach) { ZigzagEdgesShape(top || above, reach) }
     return this
         // Reports the row's own height while the ripple layer inside runs [rise] further up and [reach] further down.
         .layout { measurable, constraints ->
