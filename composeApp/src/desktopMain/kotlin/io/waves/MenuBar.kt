@@ -1,5 +1,6 @@
 package io.waves
 
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -16,10 +17,13 @@ import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.rememberWindowState
 import io.waves.player.CoverArt
 import io.waves.ui.AppState
+import io.waves.ui.LocalWheelGesture
 import io.waves.ui.MenuBarPanel
 import io.waves.ui.WavesTheme
+import io.waves.ui.WheelGesture
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -49,7 +53,14 @@ private val menuBarSupported: Boolean =
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 @Composable
-internal fun MenuBar(app: AppState, cover: StateFlow<CoverArt?>, onOpenApp: () -> Unit, onQuit: () -> Unit) {
+internal fun MenuBar(
+    app: AppState,
+    cover: StateFlow<CoverArt?>,
+    onOpenApp: () -> Unit,
+    onQuit: () -> Unit,
+    /** The trackpad gesture behind scroll events, so two fingers pull the popover's list down as a finger would. */
+    wheelGesture: StateFlow<WheelGesture>? = null,
+) {
     if (!menuBarSupported) return
     var popover by remember { mutableStateOf<WindowPosition?>(null) }
     val dismissedAt = remember { longArrayOf(0L) }
@@ -114,17 +125,19 @@ internal fun MenuBar(app: AppState, cover: StateFlow<CoverArt?>, onOpenApp: () -
                 onDispose { window.removeWindowFocusListener(focus) }
             }
             WavesTheme(app.artworkColors) {
-                MenuBarPanel(
-                    app,
-                    onOpenApp = {
-                        popover = null
-                        onOpenApp()
-                    },
-                    onQuit = {
-                        popover = null
-                        onQuit()
-                    },
-                )
+                CompositionLocalProvider(LocalWheelGesture provides (wheelGesture ?: NoWheelGesture)) {
+                    MenuBarPanel(
+                        app,
+                        onOpenApp = {
+                            popover = null
+                            onOpenApp()
+                        },
+                        onQuit = {
+                            popover = null
+                            onQuit()
+                        },
+                    )
+                }
             }
         }
     }
@@ -143,6 +156,9 @@ private fun panelPosition(click: Point): WindowPosition {
     val y = bounds.y + insets.top + PANEL_GAP
     return WindowPosition(x.dp, y.dp)
 }
+
+/** Off macOS, or before AppKit says: wheel events alone, as for a mouse. */
+private val NoWheelGesture: StateFlow<WheelGesture> = MutableStateFlow(WheelGesture.Unknown)
 
 /** A build without a release version: its menu bar item wears the window's "DEV" corner. */
 private val DevBuild = !BuildInfo.IS_RELEASE

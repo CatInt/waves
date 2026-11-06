@@ -175,7 +175,7 @@ fun main() {
             }
             // The show's own cover, as the show page's collapsed chip has; episode artwork is often a wide still.
             val showCover = remember(s) { currentCoverArt(s.state.playback, graph.http, graph.appScope, preferShow = true) }
-            MenuBar(s.state, showCover, onOpenApp = ::showMain, onQuit = { quit() })
+            MenuBar(s.state, showCover, onOpenApp = ::showMain, onQuit = { quit() }, wheelGesture = wheelGesture)
         }
     }
     shutdown()
