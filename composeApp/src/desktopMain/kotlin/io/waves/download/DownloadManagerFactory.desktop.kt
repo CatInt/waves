@@ -32,5 +32,5 @@ fun createDownloadManager(
     locate: suspend (String) -> String = { it },
 ): KtorDownloadManager = createDownloadManager(library.driver, directory, locate = locate)
 
-/** `~/Library/Application Support/Waves/episodes` on macOS, `~/.waves/episodes` elsewhere (next to waves.db). */
+/** `episodes` next to waves.db, in [io.waves.data.appDataDirectory]. */
 fun defaultDownloadDirectory(): File = File(io.waves.data.defaultDatabaseFile().parentFile, "episodes")

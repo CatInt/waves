@@ -37,7 +37,7 @@ import kotlin.time.Duration.Companion.hours
  * ```
  */
 object DesktopRefresh {
-    /** Next to the database: `~/Library/Application Support/Waves` on macOS, `~/.waves` elsewhere. */
+    /** Next to the database: `~/Library/Application Support/Waves` on macOS, `~/.waves` elsewhere (`Waves Dev`, `~/.waves-dev`, for a development build). */
     fun defaultDir(): File = defaultDatabaseFile().parentFile
 
     /**
