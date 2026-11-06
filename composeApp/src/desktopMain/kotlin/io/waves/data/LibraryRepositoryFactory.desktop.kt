@@ -13,12 +13,21 @@ import java.util.Properties
 fun createLibraryRepository(file: File = defaultDatabaseFile()): SqlLibraryRepository =
     SqlLibraryRepository(createDesktopDriver(file))
 
-/** `~/Library/Application Support/Waves/waves.db` on macOS, `~/.waves/waves.db` elsewhere. */
-fun defaultDatabaseFile(): File {
+/** `waves.db` in [appDataDirectory]. */
+fun defaultDatabaseFile(): File = File(appDataDirectory(), "waves.db")
+
+/**
+ * Where the app keeps its data (database, downloads, caches, sign-in): `~/Library/Application Support/Waves` on
+ * macOS, `~/.waves` elsewhere. A development build keeps its own, `Waves Dev` (`~/.waves-dev`), so trying one out
+ * never touches the installed app's library, downloads or sign-in.
+ */
+fun appDataDirectory(release: Boolean = io.waves.BuildInfo.IS_RELEASE): File {
     val home = System.getProperty("user.home")
     val isMac = System.getProperty("os.name").orEmpty().lowercase().contains("mac")
-    val dir = if (isMac) File(home, "Library/Application Support/Waves") else File(home, ".waves")
-    return File(dir, "waves.db")
+    return when {
+        isMac -> File(home, "Library/Application Support/" + if (release) "Waves" else "Waves Dev")
+        else -> File(home, if (release) ".waves" else ".waves-dev")
+    }
 }
 
 /**

@@ -12,7 +12,7 @@ data class StoredCredentials(val refreshToken: String, val email: String? = null
 
 /**
  * Persists the Google refresh token in a file readable only by the current user (mode 600),
- * by default `~/Library/Application Support/Waves/google-auth.json`.
+ * by default `~/Library/Application Support/Waves/google-auth.json` (`Waves Dev` for a development build).
  */
 class TokenStore(private val file: File = defaultFile()) {
     private val json = Json { ignoreUnknownKeys = true }
@@ -49,9 +49,11 @@ class TokenStore(private val file: File = defaultFile()) {
         fun defaultFile(): File {
             val home = System.getProperty("user.home")
             val os = System.getProperty("os.name").orEmpty().lowercase()
+            // A development build signs in on its own, like it keeps its own library ([appDataDirectory]).
+            val name = if (io.waves.BuildInfo.IS_RELEASE) "Waves" else "Waves Dev"
             val dir = when {
-                os.contains("mac") -> File(home, "Library/Application Support/Waves")
-                else -> File(System.getenv("XDG_CONFIG_HOME") ?: "$home/.config", "Waves")
+                os.contains("mac") -> io.waves.data.appDataDirectory()
+                else -> File(System.getenv("XDG_CONFIG_HOME") ?: "$home/.config", name)
             }
             return File(dir, "google-auth.json")
         }
