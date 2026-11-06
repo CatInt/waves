@@ -12,16 +12,18 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.awt.ComposeWindow
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isMetaPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.window.Window
+import androidx.compose.ui.window.WindowPlacement
+import androidx.compose.ui.window.WindowState
 import androidx.compose.ui.window.application
-import androidx.compose.ui.window.rememberWindowState
 import io.waves.player.JavaFxRuntime
 import io.waves.player.MacNowPlaying
 import io.waves.player.currentCoverArt
@@ -32,10 +34,16 @@ import io.waves.ui.LocalWheelGesture
 import io.waves.ui.MacWheelGesture
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.awt.Desktop
 import java.awt.Frame
@@ -44,6 +52,9 @@ import javax.swing.SwingUtilities
 import kotlin.system.exitProcess
 
 private const val SHUTDOWN_TIMEOUT_MS = 5_000L
+
+/** How long the window's size has to hold still before it's kept: a resize drag would otherwise write all along. */
+private const val KEEP_SIZE_AFTER_MS = 500L
 
 fun main() {
     var quit: () -> Unit = {}
@@ -64,11 +75,19 @@ fun main() {
         enabled = graph.offline.map { !it },
         initiallyEnabled = !graph.offline.value,
     )
+    // The main window opens at the size it had when last used.
+    val windowSizes = WindowSizeStore()
+    val windowState = WindowState(size = windowSizes.load())
+    var keptSize = windowState.size
+    // A maximized or full-screen window's size isn't the one to come back to.
+    fun floatingSize(): DpSize? = windowState.size.takeIf { windowState.placement == WindowPlacement.Floating }
+
     var shutDown = false
     // Runs on the EDT; nothing in shutdown needs the EDT (DB writes run on Dispatchers.IO), so blocking is safe.
     fun shutdown() {
         if (shutDown) return
         shutDown = true
+        floatingSize()?.takeIf { it != keptSize }?.let(windowSizes::save)
         refresh.stop()
         runBlocking { withTimeoutOrNull(SHUTDOWN_TIMEOUT_MS) { graph.shutdown() } }
         if (JavaFxRuntime.isStarted) javafx.application.Platform.exit()
@@ -121,13 +140,24 @@ fun main() {
             visible = mainVisible,
             title = "Waves",
             icon = appIcon,
-            state = rememberWindowState(width = 1100.dp, height = 720.dp),
+            state = windowState,
             onKeyEvent = { event ->
                 val closeShortcut = event.type == KeyEventType.KeyDown && event.isMetaPressed && event.key == Key.W
                 closeShortcut.also { if (it) close() }
             },
         ) {
             LaunchedEffect(window) { mainWindow = window }
+            LaunchedEffect(windowState) {
+                snapshotFlow { floatingSize() }
+                    .filterNotNull()
+                    .distinctUntilChanged()
+                    .drop(1)
+                    .collectLatest { size ->
+                        delay(KEEP_SIZE_AFTER_MS)
+                        keptSize = size
+                        withContext(Dispatchers.IO) { windowSizes.save(size) }
+                    }
+            }
             Box(Modifier.fillMaxSize()) {
                 session?.let { s ->
                     if (wheelGesture == null) App(s.deps, s.state)
