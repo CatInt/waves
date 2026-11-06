@@ -238,9 +238,18 @@ android {
 
 // macOS app: `./gradlew :composeApp:run`, or `:composeApp:packageDmg` for a .dmg
 // (`packageReleaseDmg` for the ProGuard-shrunk variant).
+/**
+ * A development build (no `-Pwaves.version`) goes by its own name and bundle ID on the Mac, so it can sit beside the
+ * installed app without macOS (Launch Services, the Dock, notifications) taking one for the other.
+ */
+val macDevBuild = releaseVersion == null
+val macAppName = if (macDevBuild) "Waves Dev" else "Waves"
+
 compose.desktop {
     application {
         mainClass = "io.waves.MainKt"
+        // `run` has no bundle to name the app: the Dock and the menu bar would call it MainKt.
+        jvmArgs("-Xdock:name=$macAppName", "-Dapple.awt.application.name=$macAppName")
 
         buildTypes.release.proguard {
             configurationFiles.from(project.file("proguard-desktop.pro"))
@@ -261,13 +270,14 @@ compose.desktop {
                 "java.instrument", "java.management", "java.net.http", "java.sql",
                 "jdk.crypto.ec", "jdk.httpserver", "jdk.jfr", "jdk.unsupported",
             )
-            packageName = "Waves"
+            packageName = macAppName
             packageVersion = appVersion
             description = "Podcast player"
             vendor = "Waves"
             copyright = "© 2026 Waves contributors. GNU GPL v3."
             macOS {
-                bundleID = "io.waves.desktop"
+                bundleID = if (macDevBuild) "io.waves.desktop.dev" else "io.waves.desktop"
+                dockName = macAppName
                 appCategory = "public.app-category.music"
                 iconFile.set(project.file("icons/waves.icns"))
             }

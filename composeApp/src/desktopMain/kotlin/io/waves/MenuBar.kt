@@ -54,9 +54,9 @@ internal fun MenuBar(app: AppState, cover: StateFlow<CoverArt?>, onOpenApp: () -
     var popover by remember { mutableStateOf<WindowPosition?>(null) }
     val dismissedAt = remember { longArrayOf(0L) }
     val tray = remember {
-        TrayIcon(MenuBarPill.image(PillContent())).apply {
+        TrayIcon(MenuBarPill.image(PillContent(dev = DevBuild))).apply {
             isImageAutoSize = false
-            toolTip = "Waves"
+            toolTip = if (DevBuild) "Waves (development build)" else "Waves"
         }
     }
 
@@ -82,7 +82,7 @@ internal fun MenuBar(app: AppState, cover: StateFlow<CoverArt?>, onOpenApp: () -
         val pillCover = cover.mapLatest { art -> art?.let { withContext(Dispatchers.Default) { PillCover.decode(it.bytes) } } }
         combine(app.playback.state, pillCover) { s, artwork ->
             val loaded = s.episode != null
-            PillContent(cover = artwork.takeIf { loaded }, dimmed = loaded && !s.isPlaying)
+            PillContent(cover = artwork.takeIf { loaded }, dimmed = loaded && !s.isPlaying, dev = DevBuild)
         }
             .distinctUntilChanged()
             .collect { tray.image = MenuBarPill.image(it) }
@@ -143,3 +143,6 @@ private fun panelPosition(click: Point): WindowPosition {
     val y = bounds.y + insets.top + PANEL_GAP
     return WindowPosition(x.dp, y.dp)
 }
+
+/** A build without a release version: its menu bar item wears the window's "DEV" corner. */
+private val DevBuild = !BuildInfo.IS_RELEASE

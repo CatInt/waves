@@ -22,11 +22,12 @@ import kotlin.math.max
 
 /**
  * What the menu bar pill shows: [cover], the playing show's cover, or the app icon's waves without one; [dimmed]
- * while that show is paused.
+ * while that show is paused; with [dev], the window's dark "DEV" corner, small, for a development build.
  */
 internal data class PillContent(
     val cover: PillCover? = null,
     val dimmed: Boolean = false,
+    val dev: Boolean = false,
 )
 
 /** A cover ready for the pill: shrunk to about the pill's width, with how much detail each of its rows holds. */
@@ -71,6 +72,10 @@ internal object MenuBarPill {
     private val Blue = Color(0x76, 0xA2, 0xE1)
     private const val LINE_ALPHA = 0.38f
     private val PausedDim = Color(0, 0, 0, 150)
+    /** The window ribbon's dark navy ([io.waves.ui.DevRibbonColor]), the Android debug icon's. */
+    private val DevCornerColor = Color(0x1A, 0x22, 0x38)
+    /** How far the corner reaches along each edge, in points: past the pill's rounded corner, so it shows. */
+    private const val DEV_CORNER = 11f
     /** The icon's 1024 canvas: the band from [ART_TOP] to [ART_BOTTOM] fills the pill's height, its right end at [ART_RIGHT]. */
     private const val ART_TOP = 420f
     private const val ART_BOTTOM = 880f
@@ -114,6 +119,7 @@ internal object MenuBarPill {
                 g.fill(Rectangle2D.Float(0f, 0f, w, h))
             }
             drawFrame(g, w, h)
+            if (content.dev) drawDevCorner(g)
         } finally {
             g.dispose()
         }
@@ -168,6 +174,19 @@ internal object MenuBarPill {
         g.stroke = BasicStroke(2 * BORDER)
         g.color = Color(255, 255, 255, 230)
         g.draw(RoundRectangle2D.Float(0f, 0f, w, h, 2 * CORNER, 2 * CORNER))
+    }
+
+    /** The window's "DEV" ribbon in little: its colour filling the top-left corner, too small here for the word. */
+    private fun drawDevCorner(g: Graphics2D) {
+        g.color = DevCornerColor
+        g.fill(
+            Path2D.Float().apply {
+                moveTo(0f, 0f)
+                lineTo(DEV_CORNER, 0f)
+                lineTo(0f, DEV_CORNER)
+                closePath()
+            },
+        )
     }
 
     /** Turns [image] to greys of the same brightness, keeping its alpha. */

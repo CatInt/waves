@@ -41,6 +41,17 @@ class MenuBarPillTest {
     }
 
     @Test
+    fun aDevelopmentBuildsPillHasADarkCornerAndAReleaseOneNone() {
+        // Just inside the rounded corner, on its diagonal, over the icon's blue.
+        val spot = { content: PillContent -> Color(retina(content).getRGB(7, 7), true) }
+        val dev = spot(PillContent(dev = true))
+        val release = spot(PillContent())
+        assertTrue(dev.red < 60 && dev.green < 70 && dev.blue < 90, "the ribbon's dark navy: $dev")
+        assertTrue(release.blue > 150, "the icon's blue: $release")
+        assertEquals(0, retina(PillContent(dev = true)).getRGB(0, 0) ushr 24, "outside the pill stays transparent")
+    }
+
+    @Test
     fun coverFillsThePillInsideAWhiteBorderCroppedToItsDetail() {
         val retina = retina(PillContent(cover = stripedCover()))
         assertEquals(0, retina.getRGB(0, 0) ushr 24, "corner outside the pill is transparent")
