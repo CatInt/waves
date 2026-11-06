@@ -56,6 +56,9 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.PointerEventPass
+import io.waves.currentTimeMillis
+import kotlinx.coroutines.delay
+import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -130,6 +133,68 @@ private class SheetProgress(initial: Float, private val scope: CoroutineScope) {
 }
 
 private fun lerp(a: Float, b: Float, t: Float) = a + (b - a) * t
+
+/** Pixels per wheel unit; Compose's own scroll speed on macOS. */
+private val WheelDragStep = 10.dp
+
+/** A pause this long between scroll events ends a trackpad drag of the sheet where the platform can't tell a lift. */
+private const val WheelDragGapMs = 120L
+
+/**
+ * A two-finger (wheel) drag of the player sheet: whether one is under way, how fast it went at the end (for a flick),
+ * and, once it has settled, swallowing the rest of that gesture: the momentum macOS sends after a lift would
+ * otherwise scroll what's under the sheet or start it moving again. Gaps and speed are measured in the scroll events'
+ * own time ([eventTime]), the time they were made rather than handled.
+ */
+private class WheelDrag {
+    var active by mutableStateOf(false)
+        private set
+    /** The latest scroll event's time ([androidx.compose.ui.input.pointer.PointerInputChange.uptimeMillis]). */
+    var eventTime = 0L
+    /** When the drag last moved, by the clock, for noticing it has gone quiet. */
+    var lastAt = 0L
+        private set
+    private var quietSince = Long.MIN_VALUE / 2
+    private val samples = ArrayDeque<Pair<Long, Float>>()
+
+    /** [dy] pixels of finger-like travel (up negative), in the event at [eventTime]. */
+    fun moved(dy: Float) {
+        active = true
+        lastAt = currentTimeMillis()
+        samples.addLast(eventTime to dy)
+        while (eventTime - samples.first().first > VelocityWindowMs) samples.removeFirst()
+    }
+
+    /** Pixels per second over the drag's last moments, finger-like (up negative). */
+    fun velocity(): Float {
+        if (samples.isEmpty()) return 0f
+        val span = (samples.last().first - samples.first().first).coerceAtLeast(16L)
+        return samples.sumOf { it.second.toDouble() }.toFloat() * 1000f / span
+    }
+
+    fun finish() {
+        active = false
+        samples.clear()
+        quietSince = eventTime
+    }
+
+    /**
+     * Whether the scroll event at [eventTime], in gesture state [g], belongs to a drag that has already settled: its
+     * lift and momentum, or (with no word from the platform) anything until the wheel pauses.
+     */
+    fun swallowing(g: WheelGesture): Boolean = when {
+        active -> false
+        g == WheelGesture.Lifted || g == WheelGesture.Momentum -> eventTime - quietSince < SwallowMs
+        g == WheelGesture.Unknown -> (eventTime - quietSince < WheelDragGapMs).also { if (it) quietSince = eventTime }
+        else -> false
+    }
+
+    private companion object {
+        const val VelocityWindowMs = 100L
+        /** Longer than macOS's momentum ever runs. */
+        const val SwallowMs = 3_000L
+    }
+}
 
 /**
  * The player as one surface that morphs between the floating mini player and the full-screen Now Playing view,
@@ -226,6 +291,37 @@ internal fun PlayerSheet(
                 }
             }
 
+            // Two fingers on a trackpad move the sheet as one finger dragging does: up over the mini player opens it,
+            // down at the top of Now Playing closes it, and it settles when they lift.
+            val wheelGesture = LocalWheelGesture.current
+            val wheel = remember { WheelDrag() }
+            val wheelStep = with(density) { WheelDragStep.toPx() }
+            LaunchedEffect(wheel.active) {
+                if (!wheel.active) return@LaunchedEffect
+                // Fingers lifted (macOS says so), or no word for a moment (a mouse wheel).
+                while (true) {
+                    delay(16)
+                    val g = wheelGesture.value
+                    if (g == WheelGesture.Lifted || g == WheelGesture.Momentum) break
+                    if (currentTimeMillis() - wheel.lastAt > WheelDragGapMs) break
+                }
+                val velocity = wheel.velocity()
+                wheel.finish()
+                settle(velocity)
+            }
+            // Scrolled to its top, the rest of a downward gesture closes Now Playing, as a finger's would.
+            val wheelLeftover = remember(travel, expanded) {
+                object : NestedScrollConnection {
+                    override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+                        if (pointerDown || available.y <= 0f || wheelGesture.value == WheelGesture.Momentum) return Offset.Zero
+                        if (wheel.swallowing(wheelGesture.value)) return Offset.Zero
+                        wheel.moved(available.y)
+                        sheet.dragBy(-available.y * SwipeFactor / travel)
+                        return Offset(0f, available.y)
+                    }
+                }
+            }
+
             val colors = MaterialTheme.colorScheme
             // Kept composed (invisible) while collapsed so a drag never waits on building the full player.
             val showFull = episode != null || expanded
@@ -267,12 +363,57 @@ internal fun PlayerSheet(
                             }
                         }
                     }
+                    // Before the content: once two fingers have the sheet, or over the mini player (nothing in it
+                    // scrolls), their movement drags it, and none of it scrolls what's underneath.
+                    .pointerInput(travel, expanded) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val event = awaitPointerEvent(PointerEventPass.Initial)
+                                if (event.type != PointerEventType.Scroll || pointerDown) continue
+                                val change = event.changes.firstOrNull()?.takeIf { !it.isConsumed } ?: continue
+                                wheel.eventTime = change.uptimeMillis
+                                val g = wheelGesture.value
+                                if (wheel.swallowing(g)) {
+                                    change.consume()
+                                    continue
+                                }
+                                if (g == WheelGesture.Momentum) continue
+                                // As a finger would move: up is negative.
+                                val dy = -change.scrollDelta.y * wheelStep
+                                if (dy == 0f) continue
+                                if (wheel.active || p() < 1f) {
+                                    wheel.moved(dy)
+                                    sheet.dragBy(-dy * SwipeFactor / travel)
+                                    change.consume()
+                                }
+                            }
+                        }
+                    }
+                    // After the content: in Now Playing, a downward movement nothing under the fingers took (over
+                    // its header, or its text already at the top) starts closing it.
+                    .pointerInput(travel, expanded) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val event = awaitPointerEvent(PointerEventPass.Main)
+                                if (event.type != PointerEventType.Scroll || pointerDown || wheel.active) continue
+                                val change = event.changes.firstOrNull()?.takeIf { !it.isConsumed } ?: continue
+                                val g = wheelGesture.value
+                                if (g == WheelGesture.Momentum || wheel.swallowing(g)) continue
+                                val dy = -change.scrollDelta.y * wheelStep
+                                if (dy <= 0f) continue
+                                wheel.moved(dy)
+                                sheet.dragBy(-dy * SwipeFactor / travel)
+                                change.consume()
+                            }
+                        }
+                    }
                     .draggable(
                         state = rememberDraggableState { delta -> sheet.dragBy(-delta * SwipeFactor / travel) },
                         orientation = Orientation.Vertical,
                         onDragStopped = { velocity -> settle(velocity) },
                     )
-                    .nestedScroll(nestedScroll),
+                    .nestedScroll(nestedScroll)
+                    .nestedScroll(wheelLeftover),
             ) {
                 val morphing = { p() > 0f && artOrigin != Offset.Unspecified && artSize > 0f }
                 // Whichever layer is (mostly) visible sits on top and takes the taps.

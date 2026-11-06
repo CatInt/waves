@@ -228,6 +228,50 @@ class WavesAppUiTest {
     }
 
     @Test
+    fun trackpadOpensAndClosesThePlayerAsADragWould() = runComposeUiTest {
+        val deps = fakeDependencies(playerTickMs = 60 * 60 * 1000L)
+        setContent { App(deps) }
+
+        onNode(navTab("Discover")).performClick()
+        waitForText("Slow Radio")
+        onAllNodes(named("Slow Radio")).onFirst().performClick()
+        waitForText("Slow Radio: Episode 1")
+        onAllNodesWithContentDescription("Play").onFirst().performClick()
+        waitFor("mini player") { onAllNodesWithTag(MINI_PLAYER_TAG).fetchSemanticsNodes().isNotEmpty() }
+
+        // Two fingers moving up over the mini player open it; it settles once they stop.
+        onNodeWithTag(MINI_PLAYER_TAG).performMouseInput {
+            moveTo(center)
+            repeat(50) { scroll(1f) }
+        }
+        waitForDescription("Collapse player")
+        assertTrue(onAllNodesWithTag(MINI_PLAYER_TAG).fetchSemanticsNodes().isEmpty())
+
+        // In Now Playing, moving down over its header closes it.
+        onNodeWithContentDescription("Collapse player").performMouseInput {
+            advanceEventTime(1_000)
+            moveTo(center)
+            repeat(60) { scroll(-1f) }
+        }
+        waitForDescription("Collapse player", present = false)
+        onNodeWithTag(MINI_PLAYER_TAG).assertExists()
+
+        // And over its scrolling text, already at the top.
+        onNodeWithTag(MINI_PLAYER_TAG).performMouseInput {
+            advanceEventTime(1_000)
+            moveTo(center)
+            repeat(50) { scroll(1f) }
+        }
+        waitForDescription("Collapse player")
+        onAllNodesWithText("Slow Radio: Episode 1").onFirst().performMouseInput {
+            advanceEventTime(1_000)
+            moveTo(center)
+            repeat(60) { scroll(-1f) }
+        }
+        waitForDescription("Collapse player", present = false)
+    }
+
+    @Test
     fun marksAnEpisodeCompleteAndHidesItsButton() = runComposeUiTest {
         val deps = fakeDependencies(playerTickMs = 60 * 60 * 1000L)
         setContent { App(deps) }
