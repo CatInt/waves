@@ -196,6 +196,51 @@ class WavesAppUiTest {
     }
 
     @Test
+    fun aSwipeStartedWhileTheLastOneGlidesOnTurnsThePageAgain() = runComposeUiTest {
+        val gesture = MutableStateFlow(WheelGesture.Touching)
+        setContent { CompositionLocalProvider(LocalWheelGesture provides gesture) { App(fakeDependencies(playerTickMs = 60 * 60 * 1000L)) } }
+        waitForText("No subscriptions yet")
+        val page = onNodeWithText("No subscriptions yet")
+        // The clock stands still: no pause anywhere, as when the fingers come down again before the glide ends.
+        mainClock.autoAdvance = false
+
+        // A swipe a page long, then the fingers lift and it glides on...
+        page.performMouseInput { moveTo(center); repeat(110) { scroll(1f, ScrollWheel.Horizontal) } }
+        gesture.value = WheelGesture.Momentum
+        page.performMouseInput { repeat(5) { scroll(0.5f, ScrollWheel.Horizontal) } }
+        // ...until they come down and swipe on: a swipe of its own, which turns the next page.
+        gesture.value = WheelGesture.Touching
+        page.performMouseInput { repeat(60) { scroll(1f, ScrollWheel.Horizontal) } }
+        gesture.value = WheelGesture.Lifted
+
+        mainClock.autoAdvance = true
+        mainClock.advanceTimeBy(1_000)
+        waitFor("History selected") { onAllNodes(navTab("History") and isSelected()).fetchSemanticsNodes().isNotEmpty() }
+    }
+
+    @Test
+    fun aSwipeWhileThePageIsStillTurningCarriesOnFromThePageItIsTurningTo() = runComposeUiTest {
+        val gesture = MutableStateFlow(WheelGesture.Touching)
+        setContent { CompositionLocalProvider(LocalWheelGesture provides gesture) { App(fakeDependencies(playerTickMs = 60 * 60 * 1000L)) } }
+        waitForText("No subscriptions yet")
+        val page = onNodeWithText("No subscriptions yet")
+        mainClock.autoAdvance = false
+
+        // Past the turning point but short of half way, lifted: the page starts turning to Discover...
+        page.performMouseInput { moveTo(center); repeat(35) { scroll(1f, ScrollWheel.Horizontal) } }
+        gesture.value = WheelGesture.Lifted
+        mainClock.advanceTimeBy(130)
+        // ...and a second swipe, before it gets there, turns on from Discover.
+        gesture.value = WheelGesture.Touching
+        page.performMouseInput { repeat(110) { scroll(1f, ScrollWheel.Horizontal) } }
+        gesture.value = WheelGesture.Lifted
+
+        mainClock.autoAdvance = true
+        mainClock.advanceTimeBy(1_000)
+        waitFor("History selected") { onAllNodes(navTab("History") and isSelected()).fetchSemanticsNodes().isNotEmpty() }
+    }
+
+    @Test
     fun restingFingersHoldThePlayerSheetUntilTheyLift() = runComposeUiTest {
         val gesture = MutableStateFlow(WheelGesture.Touching)
         val deps = fakeDependencies(playerTickMs = 60 * 60 * 1000L)

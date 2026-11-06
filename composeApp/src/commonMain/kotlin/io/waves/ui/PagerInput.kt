@@ -20,9 +20,11 @@ import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
@@ -39,7 +41,8 @@ internal expect val wheelPagesTabs: Boolean
 
 /**
  * A pause this long between scroll events ends a gesture, momentum included, unless the platform says fingers still
- * rest on the trackpad ([WheelGesture.Touching]): then it goes on until they move again or lift.
+ * rest on the trackpad ([WheelGesture.Touching]): then it goes on until they move again or lift. Fingers coming
+ * down again end it too, pause or not.
  */
 private const val GestureGapMs = 120L
 
@@ -98,7 +101,6 @@ internal fun Modifier.wheelPaging(
     val self = regions.host
     return onGloballyPositioned { self.coordinates = it }.pointerInput(pager, regions, wheelGesture) {
         val unitPx = WheelUnit.toPx()
-        var gesture: Job? = null
 
         fun PointerEvent.scrollChange(): PointerInputChange? =
             if (type == PointerEventType.Scroll) changes.firstOrNull()?.takeIf { !it.isConsumed } else null
@@ -111,75 +113,128 @@ internal fun Modifier.wheelPaging(
             }
         }
 
-        // A page gesture held open by fingers resting on the trackpad: its deltas, until they lift or move again.
-        var held: Channel<Float>? = null
+        // The latest page gesture: following its deltas, held, or settling on its page.
+        var page: PageGesture? = null
+        // While fingers resting on the trackpad hold [page] open: the touch that holds it, else -1.
+        var heldTouch = -1
         var heldWatch: Job? = null
-        var direction = 0f
-        awaitPointerEventScope {
-            while (true) {
-                // A gesture: scroll events until a pause. Its axis is decided once it has travelled LockUnits.
-                var change = awaitPointerEvent(PointerEventPass.Initial).scrollChange() ?: continue
-                var sumX = 0f
-                var sumY = 0f
-                var axis = Axis.Undecided
-                var deltas: Channel<Float>? = null
-                // Fingers that rested and now move again carry on the gesture they held; momentum on its own (after
-                // a lift) never starts one.
-                heldWatch?.cancel()
-                held?.takeIf { !it.isClosedForSend }?.let {
-                    axis = Axis.Pages
-                    deltas = it
-                }
-                held = null
-                if (axis == Axis.Undecided && wheelGesture.value == WheelGesture.Momentum) axis = Axis.Other
+        val touches = Touches(wheelGesture)
+        coroutineScope {
+            launch { wheelGesture.collect { touches.note(it) } }
+            awaitPointerEventScope {
+                // The first event of the next gesture, when it was already taken from the stream.
+                var pending: PointerInputChange? = null
                 while (true) {
-                    val d = change.scrollDelta
-                    when (axis) {
-                        Axis.Undecided -> {
-                            sumX += d.x; sumY += d.y
-                            if (abs(sumX) + abs(sumY) >= LockUnits) {
-                                axis = when {
-                                    abs(sumX) <= abs(sumY) * 1.5f -> Axis.Other
-                                    overRegion(change.position) -> Axis.Other
-                                    else -> Axis.Pages
-                                }
-                                if (axis == Axis.Pages) {
-                                    change.consume()
-                                    direction = sumX
-                                    gesture?.cancel()
-                                    val channel = Channel<Float>(Channel.UNLIMITED).also { deltas = it }
-                                    gesture = scope.launch { followGesture(pager, channel, unitPx) { direction } }
-                                    channel.trySend(sumX)
+                    // A gesture: scroll events until a pause or a new touch. Its axis is decided once it has
+                    // travelled LockUnits.
+                    var change = pending ?: awaitPointerEvent(PointerEventPass.Initial).scrollChange() ?: continue
+                    pending = null
+                    touches.note()
+                    val touch = touches.count
+                    var sumX = 0f
+                    var sumY = 0f
+                    var axis = Axis.Undecided
+                    // The page gesture this one feeds, once it's judged one.
+                    var fed: PageGesture? = null
+                    // Fingers that rested and now move again carry on the gesture they held; fingers that lifted
+                    // and came down again start a new one, and momentum on its own (after a lift) never starts one.
+                    heldWatch?.cancel()
+                    page?.takeIf { heldTouch >= 0 }?.let { held ->
+                        if (heldTouch == touch) {
+                            axis = Axis.Pages
+                            fed = held
+                        } else {
+                            held.deltas.close()
+                        }
+                    }
+                    heldTouch = -1
+                    if (axis == Axis.Undecided && wheelGesture.value == WheelGesture.Momentum) axis = Axis.Other
+                    var newTouch = false
+                    while (true) {
+                        val d = change.scrollDelta
+                        when (axis) {
+                            Axis.Undecided -> {
+                                sumX += d.x; sumY += d.y
+                                if (abs(sumX) + abs(sumY) >= LockUnits) {
+                                    axis = when {
+                                        abs(sumX) <= abs(sumY) * 1.5f -> Axis.Other
+                                        overRegion(change.position) -> Axis.Other
+                                        else -> Axis.Pages
+                                    }
+                                    if (axis == Axis.Pages) {
+                                        change.consume()
+                                        val previous = page
+                                        val gesture = PageGesture(direction = sumX)
+                                        gesture.job = scope.launch { followGesture(pager, gesture, previous, unitPx) }
+                                        gesture.deltas.trySend(sumX)
+                                        page = gesture
+                                        fed = gesture
+                                    }
                                 }
                             }
+                            Axis.Pages -> {
+                                change.consume()
+                                fed?.let { gesture ->
+                                    if (d.x != 0f) gesture.direction = d.x
+                                    gesture.deltas.trySend(d.x)
+                                }
+                            }
+                            Axis.Other -> Unit
                         }
-                        Axis.Pages -> {
-                            change.consume()
-                            if (d.x != 0f) direction = d.x
-                            deltas?.trySend(d.x)
+                        change = withTimeoutOrNull(GestureGapMs) {
+                            var next: PointerInputChange? = null
+                            while (next == null) next = awaitPointerEvent(PointerEventPass.Initial).scrollChange()
+                            next
+                        } ?: break
+                        touches.note()
+                        if (touches.count != touch) {
+                            // Fingers came down again with no pause (as the last swipe glides on): a new swipe.
+                            pending = change
+                            newTouch = true
+                            break
                         }
-                        Axis.Other -> Unit
                     }
-                    change = withTimeoutOrNull(GestureGapMs) {
-                        var next: PointerInputChange? = null
-                        while (next == null) next = awaitPointerEvent(PointerEventPass.Initial).scrollChange()
-                        next
-                    } ?: break
-                }
-                val open = deltas
-                if (axis == Axis.Pages && open != null && wheelGesture.value == WheelGesture.Touching) {
-                    // Resting fingers hold the page where they left it, as a finger would, until they lift.
-                    held = open
-                    heldWatch = scope.launch {
-                        wheelGesture.first { it != WheelGesture.Touching }
-                        open.close()
+                    val open = fed?.deltas
+                    if (!newTouch && open != null && wheelGesture.value == WheelGesture.Touching) {
+                        // Resting fingers hold the page where they left it, as a finger would, until they lift.
+                        heldTouch = touch
+                        heldWatch = scope.launch {
+                            wheelGesture.first { it != WheelGesture.Touching }
+                            open.close()
+                            heldTouch = -1
+                        }
+                    } else {
+                        open?.close()
                     }
-                } else {
-                    open?.close()
                 }
             }
         }
     }
+}
+
+/**
+ * Counts the times fingers come down on the trackpad, from the [WheelGesture]s [note]d: watched as the state
+ * changes, and looked at again as each scroll event arrives, whichever sees the change first.
+ */
+private class Touches(private val gesture: StateFlow<WheelGesture>) {
+    var count = 0
+        private set
+    private var last = gesture.value
+
+    fun note(now: WheelGesture = gesture.value) {
+        if (now == WheelGesture.Touching && last != WheelGesture.Touching) count++
+        last = now
+    }
+}
+
+/**
+ * A gesture turning the pages: the deltas it feeds the pager, which way it last went, and the page it settles on
+ * once they end.
+ */
+private class PageGesture(var direction: Float) {
+    val deltas = Channel<Float>(Channel.UNLIMITED)
+    lateinit var job: Job
+    val landing = CompletableDeferred<Int>()
 }
 
 private enum class Axis { Undecided, Pages, Other }
@@ -189,25 +244,44 @@ private const val LockUnits = 1.5f
 
 /**
  * One scroll session per gesture keeps the pager "in progress", so settledPage (and the tab) only change once it
- * lands; then snaps to the page the gesture carried it to (at most one either side).
+ * lands; then snaps to the page the gesture carried it to (at most one either side). A gesture that starts while
+ * the [previous] one is still settling counts from the page that one is settling on, so quick swipes turn a page
+ * each.
  */
-private suspend fun followGesture(pager: PagerState, deltas: Channel<Float>, unitPx: Float, direction: () -> Float) {
-    val start = (pager.currentPage + pager.currentPageOffsetFraction).roundToInt()
-    val pageSize = (pager.layoutInfo.pageSize + pager.layoutInfo.pageSpacing).coerceAtLeast(1)
-    val min = (start - 1).coerceAtLeast(0).toFloat()
-    val max = (start + 1).coerceAtMost(pager.pageCount - 1).toFloat()
+private suspend fun followGesture(
+    pager: PagerState,
+    gesture: PageGesture,
+    previous: PageGesture?,
+    unitPx: Float,
+) {
     fun position() = pager.currentPage + pager.currentPageOffsetFraction
-    pager.scroll(MutatePriority.UserInput) {
-        for (units in deltas) {
-            val target = (position() + units * unitPx / pageSize).coerceIn(min, max)
-            scrollBy((target - position()) * pageSize)
+    try {
+        val start = previous?.takeIf { it.job.isActive }?.let { settling ->
+            settling.deltas.close()
+            val landing = settling.landing.await()
+            // This gesture takes the pager from here: the last one stops settling.
+            settling.job.cancel()
+            landing
+        } ?: position().roundToInt()
+        val pageSize = (pager.layoutInfo.pageSize + pager.layoutInfo.pageSpacing).coerceAtLeast(1)
+        val min = (start - 1).coerceAtLeast(0).toFloat()
+        val max = (start + 1).coerceAtMost(pager.pageCount - 1).toFloat()
+        pager.scroll(MutatePriority.UserInput) {
+            for (units in gesture.deltas) {
+                val target = (position() + units * unitPx / pageSize).coerceIn(min, max)
+                scrollBy((target - position()) * pageSize)
+            }
         }
+        val moved = position() - start
+        val target = when {
+            moved >= TurnFraction && gesture.direction > 0f -> start + 1
+            moved <= -TurnFraction && gesture.direction < 0f -> start - 1
+            else -> start
+        }.coerceIn(0, pager.pageCount - 1)
+        gesture.landing.complete(target)
+        pager.animateScrollToPage(target)
+    } finally {
+        // Cut short before it knew where to land: where the pager is will do (a no-op once it knew).
+        gesture.landing.complete(position().roundToInt().coerceIn(0, pager.pageCount - 1))
     }
-    val moved = position() - start
-    val target = when {
-        moved >= TurnFraction && direction() > 0f -> start + 1
-        moved <= -TurnFraction && direction() < 0f -> start - 1
-        else -> start
-    }.coerceIn(0, pager.pageCount - 1)
-    pager.animateScrollToPage(target)
 }

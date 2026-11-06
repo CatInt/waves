@@ -41,6 +41,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -66,6 +67,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -205,16 +207,26 @@ fun WavesApp(deps: AppDependencies, app: AppState = remember(deps) { AppState(de
                     app.home.releaseOrder()
                 }
             }
+            // The tab the navigator took from the pages coming to rest: no call to move them, which may be on the
+            // move again already, under the next swipe.
+            val restedTab = remember { mutableStateOf<Tab?>(null) }
             LaunchedEffect(pager) {
-                snapshotFlow { pager.settledPage }.collect { page ->
+                // Once the pages come to rest: a scroll that starts part way through a turn (a trackpad swipe's
+                // settling) marks the page it starts on as settled, and that's not where it's going.
+                snapshotFlow { pager.settledPage.takeIf { !pager.isScrollInProgress } }.filterNotNull().collect { page ->
                     val tab = Tab.entries[page]
-                    if (nav.content is Screen.Root && nav.currentTab != tab) nav.select(tab)
+                    if (nav.content is Screen.Root && nav.currentTab != tab) {
+                        restedTab.value = tab
+                        nav.select(tab)
+                    }
                 }
             }
             // History's downloaded-only toggle is for a look, not a setting: it's off again once the tab is left.
             LaunchedEffect(nav.currentTab) { if (nav.currentTab != Tab.History) app.history.showAll() }
             LaunchedEffect(nav.currentTab) {
                 val page = nav.currentTab.ordinal
+                if (restedTab.value == nav.currentTab) return@LaunchedEffect
+                restedTab.value = null
                 if (pager.currentPage == page && pager.currentPageOffsetFraction == 0f) return@LaunchedEffect
                 if (nav.content is Screen.Root) pager.animateScrollToPage(page) else pager.scrollToPage(page)
             }
