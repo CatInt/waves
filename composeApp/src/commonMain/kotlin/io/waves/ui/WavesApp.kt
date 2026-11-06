@@ -219,8 +219,10 @@ fun WavesApp(deps: AppDependencies, app: AppState = remember(deps) { AppState(de
                 if (nav.content is Screen.Root) pager.animateScrollToPage(page) else pager.scrollToPage(page)
             }
 
-            Box(Modifier.fillMaxSize()) {
+            val wheelCapture = remember { WheelCapture() }
+            Box(Modifier.fillMaxSize().wheelCaptureRoot(wheelCapture)) {
                 CompositionLocalProvider(
+                    LocalWheelCapture provides wheelCapture,
                     LocalBottomClearance provides clearance,
                     LocalPlayerColors provides playerColors,
                     LocalIsLandscapeLayout provides isLandscape,
