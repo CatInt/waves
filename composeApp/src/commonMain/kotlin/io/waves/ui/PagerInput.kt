@@ -23,6 +23,9 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -34,7 +37,10 @@ import kotlin.math.roundToInt
  */
 internal expect val wheelPagesTabs: Boolean
 
-/** A pause this long between scroll events ends a gesture, momentum included. */
+/**
+ * A pause this long between scroll events ends a gesture, momentum included, unless the platform says fingers still
+ * rest on the trackpad ([WheelGesture.Touching]): then it goes on until they move again or lift.
+ */
 private const val GestureGapMs = 120L
 
 /** How far (in pages) a gesture must carry the page, in its direction of travel, to turn it. */
@@ -87,9 +93,10 @@ internal fun Modifier.wheelPaging(
     pager: PagerState,
     scope: CoroutineScope,
     regions: HorizontalScrollRegions,
+    wheelGesture: StateFlow<WheelGesture> = MutableStateFlow(WheelGesture.Unknown),
 ): Modifier {
     val self = regions.host
-    return onGloballyPositioned { self.coordinates = it }.pointerInput(pager, regions) {
+    return onGloballyPositioned { self.coordinates = it }.pointerInput(pager, regions, wheelGesture) {
         val unitPx = WheelUnit.toPx()
         var gesture: Job? = null
 
@@ -104,6 +111,10 @@ internal fun Modifier.wheelPaging(
             }
         }
 
+        // A page gesture held open by fingers resting on the trackpad: its deltas, until they lift or move again.
+        var held: Channel<Float>? = null
+        var heldWatch: Job? = null
+        var direction = 0f
         awaitPointerEventScope {
             while (true) {
                 // A gesture: scroll events until a pause. Its axis is decided once it has travelled LockUnits.
@@ -112,7 +123,15 @@ internal fun Modifier.wheelPaging(
                 var sumY = 0f
                 var axis = Axis.Undecided
                 var deltas: Channel<Float>? = null
-                var direction = 0f
+                // Fingers that rested and now move again carry on the gesture they held; momentum on its own (after
+                // a lift) never starts one.
+                heldWatch?.cancel()
+                held?.takeIf { !it.isClosedForSend }?.let {
+                    axis = Axis.Pages
+                    deltas = it
+                }
+                held = null
+                if (axis == Axis.Undecided && wheelGesture.value == WheelGesture.Momentum) axis = Axis.Other
                 while (true) {
                     val d = change.scrollDelta
                     when (axis) {
@@ -147,7 +166,17 @@ internal fun Modifier.wheelPaging(
                         next
                     } ?: break
                 }
-                deltas?.close()
+                val open = deltas
+                if (axis == Axis.Pages && open != null && wheelGesture.value == WheelGesture.Touching) {
+                    // Resting fingers hold the page where they left it, as a finger would, until they lift.
+                    held = open
+                    heldWatch = scope.launch {
+                        wheelGesture.first { it != WheelGesture.Touching }
+                        open.close()
+                    }
+                } else {
+                    open?.close()
+                }
             }
         }
     }

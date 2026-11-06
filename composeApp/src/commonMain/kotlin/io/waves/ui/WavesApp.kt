@@ -286,7 +286,7 @@ private fun CurrentScreen(
             HorizontalPager(
                 state = pager,
                 modifier = Modifier.fillMaxSize()
-                    .then(if (wheelPagesTabs) Modifier.wheelPaging(pager, scope, scrollRegions) else Modifier),
+                    .then(if (wheelPagesTabs) Modifier.wheelPaging(pager, scope, scrollRegions, LocalWheelGesture.current) else Modifier),
                 userScrollEnabled = !wheelPagesTabs,
                 flingBehavior = PagerDefaults.flingBehavior(
                     state = pager,

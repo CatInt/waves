@@ -75,6 +75,7 @@ import io.waves.model.Podcast
 import io.waves.player.PlaybackState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.max
@@ -298,12 +299,16 @@ internal fun PlayerSheet(
             val wheelStep = with(density) { WheelDragStep.toPx() }
             LaunchedEffect(wheel.active) {
                 if (!wheel.active) return@LaunchedEffect
-                // Fingers lifted (macOS says so), or no word for a moment (a mouse wheel).
+                // Fingers lifted (macOS says so), or no word for a moment from a mouse wheel. Fingers resting on
+                // the trackpad hold the sheet where it is, as a finger resting on the screen does.
                 while (true) {
-                    delay(16)
-                    val g = wheelGesture.value
-                    if (g == WheelGesture.Lifted || g == WheelGesture.Momentum) break
-                    if (currentTimeMillis() - wheel.lastAt > WheelDragGapMs) break
+                    if (wheelGesture.value != WheelGesture.Unknown) {
+                        wheelGesture.first { it == WheelGesture.Lifted || it == WheelGesture.Momentum }
+                        break
+                    }
+                    val quiet = currentTimeMillis() - wheel.lastAt
+                    if (quiet >= WheelDragGapMs) break
+                    delay(WheelDragGapMs - quiet)
                 }
                 val velocity = wheel.velocity()
                 wheel.finish()

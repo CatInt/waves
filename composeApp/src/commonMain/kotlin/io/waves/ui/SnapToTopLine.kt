@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import kotlin.math.abs
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
@@ -67,12 +68,20 @@ internal fun SnapToTopLine(
     uncover: () -> Float? = { null },
 ) {
     val reachPx = with(LocalDensity.current) { reach.toPx() }
+    val gesture = LocalWheelGesture.current
     LaunchedEffect(Unit) {
         snapshotFlow { scrolling() }.collect { moving ->
             if (moving) return@collect
             // A wheel or trackpad scrolls in bursts with short rests between them; wait for a real stop.
             delay(SettleMillis)
             if (scrolling()) return@collect
+            // Fingers resting on the trackpad still hold the list, as a finger on the screen does: not before
+            // they lift (and any momentum after has run).
+            if (gesture.value == WheelGesture.Touching) {
+                gesture.first { it != WheelGesture.Touching }
+                delay(SettleMillis)
+                if (scrolling()) return@collect
+            }
             val nearest = offsets().minByOrNull { abs(it) }
             val off = nearest?.takeIf { abs(it) <= reachPx }?.toFloat() ?: uncover() ?: return@collect
             if (off == 0f) return@collect

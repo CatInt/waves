@@ -11,6 +11,8 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Text
 import androidx.compose.runtime.getValue
+import kotlinx.coroutines.flow.MutableStateFlow
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -51,6 +53,28 @@ class SnapToTopLineUiTest {
         val state = rows()
         val px = density.run { 10.dp.roundToPx() }
         rest(state, index = 5, offset = px)
+        assertEquals(5 to 0, state.firstVisibleItemIndex to state.firstVisibleItemScrollOffset)
+    }
+
+    @Test
+    fun restingFingersHoldTheListUntilTheyLift() = runComposeUiTest {
+        val gesture = MutableStateFlow(WheelGesture.Touching)
+        val state = LazyListState()
+        setContent {
+            CompositionLocalProvider(LocalWheelGesture provides gesture) {
+                SnapToTopLine(state)
+                LazyColumn(Modifier.fillMaxSize(), state = state) {
+                    items(40) { Text("Row $it", Modifier.fillMaxWidth().height(160.dp)) }
+                }
+            }
+        }
+        waitForIdle()
+        val px = density.run { 10.dp.roundToPx() }
+        rest(state, index = 5, offset = px)
+        assertEquals(5 to px, state.firstVisibleItemIndex to state.firstVisibleItemScrollOffset, "held where the fingers left it")
+        gesture.value = WheelGesture.Lifted
+        mainClock.advanceTimeBy(1_000)
+        waitForIdle()
         assertEquals(5 to 0, state.firstVisibleItemIndex to state.firstVisibleItemScrollOffset)
     }
 
