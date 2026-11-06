@@ -10,6 +10,7 @@ import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.ScrollWheel
 import kotlinx.coroutines.flow.MutableStateFlow
 import androidx.compose.runtime.CompositionLocalProvider
@@ -220,6 +221,43 @@ class WavesAppUiTest {
 
         gesture.value = WheelGesture.Lifted
         waitFor("opened") { app.navigator.current == Screen.NowPlaying }
+    }
+
+    @Test
+    fun aTwoFingerDragKeepsTheSheetAfterItSlidesFromUnderThePointer() = runComposeUiTest {
+        val gesture = MutableStateFlow(WheelGesture.Touching)
+        val deps = fakeDependencies(playerTickMs = 60 * 60 * 1000L)
+        val app = AppState(deps, deps.appScope)
+        setContent { CompositionLocalProvider(LocalWheelGesture provides gesture) { App(deps, app) } }
+
+        onNode(navTab("Discover")).performClick()
+        waitForText("Slow Radio")
+        onAllNodes(named("Slow Radio")).onFirst().performClick()
+        waitForText("Slow Radio: Episode 1")
+        onAllNodesWithContentDescription("Play").onFirst().performClick()
+        waitFor("mini player") { onAllNodesWithTag(MINI_PLAYER_TAG).fetchSemanticsNodes().isNotEmpty() }
+        onNodeWithTag(MINI_PLAYER_TAG).performClick()
+        waitForDescription("Collapse player")
+
+        // Down from the header until the sheet has slid well below the pointer, then back up, fingers down all along.
+        // The pointer stirs a pixel between events, so each lands on whatever is under it by then, as on a Mac.
+        onNodeWithContentDescription("Collapse player").performMouseInput {
+            moveTo(center)
+            repeat(30) { i ->
+                moveBy(Offset(if (i % 2 == 0) 1f else -1f, 0f))
+                scroll(-1f)
+            }
+            repeat(30) { i ->
+                moveBy(Offset(if (i % 2 == 0) 1f else -1f, 0f))
+                scroll(1f)
+            }
+        }
+        mainClock.advanceTimeBy(500)
+        gesture.value = WheelGesture.Lifted
+        mainClock.advanceTimeBy(1_000)
+        waitForIdle()
+        // Back up, so it stays open: the upward half reached the sheet, not the page behind it.
+        assertEquals(Screen.NowPlaying, app.navigator.current)
     }
 
     @Test

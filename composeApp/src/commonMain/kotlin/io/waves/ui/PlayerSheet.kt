@@ -35,6 +35,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -56,6 +57,7 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerInputChange
 import io.waves.currentTimeMillis
 import kotlinx.coroutines.delay
 import androidx.compose.ui.input.pointer.PointerEventType
@@ -314,6 +316,24 @@ internal fun PlayerSheet(
                 wheel.finish()
                 settle(velocity)
             }
+            // Once two fingers have the sheet, the rest of their gesture is the sheet's wherever the pointer goes
+            // (Now Playing slides down from under it), as a finger keeps hold of what it started dragging; so are
+            // the lift and momentum after a settle, which would otherwise scroll the page behind.
+            val capture = LocalWheelCapture.current
+            fun captured(change: PointerInputChange): Boolean {
+                if (pointerDown) return false
+                wheel.eventTime = change.uptimeMillis
+                val g = wheelGesture.value
+                if (wheel.swallowing(g)) return true
+                if (!wheel.active) return false
+                if (g == WheelGesture.Momentum) return true
+                val dy = -change.scrollDelta.y * wheelStep
+                wheel.moved(dy)
+                sheet.dragBy(-dy * SwipeFactor / travel)
+                return true
+            }
+            SideEffect { capture?.owner = ::captured }
+            DisposableEffect(capture) { onDispose { capture?.owner = null } }
             // Scrolled to its top, the rest of a downward gesture closes Now Playing, as a finger's would.
             val wheelLeftover = remember(travel, expanded) {
                 object : NestedScrollConnection {
