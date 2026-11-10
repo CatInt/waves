@@ -133,6 +133,27 @@ class StreamRelayPlayheadTest {
         assertTrue(!dest.exists())
     }
 
+    @Test fun aReadLeftBehindByAJumpAheadEndsAndFetchesNothingBehind() {
+        val url = assertNotNull(StreamRelay.relayOrNull(remote, "mp3"))
+        StreamRelay.reportPlayback(url, positionMs = 0, durationMs = 1_000_000)
+        // A connection reading as fast as it can, held at the cap...
+        val body = client.send(
+            HttpRequest.newBuilder(URI(url)).header("Range", "bytes=0-").build(),
+            HttpResponse.BodyHandlers.ofInputStream(),
+        ).body()
+        val reader = Thread { runCatching { body.readAllBytes() } }.apply { isDaemon = true; start() }
+        settle()
+        // ...then a jump to 90%: a new connection there, the old one left behind.
+        val at = (payload.size * 0.9).toLong()
+        StreamRelay.reportPlayback(url, positionMs = 900_000, durationMs = 1_000_000)
+        assertContentEquals(payload.copyOfRange(at.toInt(), at.toInt() + mb), get(url, "bytes=$at-${at + mb - 1}"))
+        settle()
+        reader.join(5_000)
+        assertTrue(!reader.isAlive, "the old read ended")
+        // Nothing between the cap and the jump was fetched.
+        assertTrue(asked.none { it.first in (12L * mb) until at - 2L * mb }, asked.toString())
+    }
+
     @Test fun aServerWithoutRangesIsPlayedDirectly() {
         honorRanges = false
         assertNull(StreamRelay.relayOrNull(remote, "mp3"))

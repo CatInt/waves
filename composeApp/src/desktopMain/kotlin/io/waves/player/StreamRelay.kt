@@ -275,6 +275,12 @@ internal object StreamRelay {
             }
         }
 
+        /** Whether a read at [pos] is far behind where a paced stream plays. Under [lock]. */
+        private fun leftBehind(pos: Long): Boolean {
+            val readAhead = readAhead ?: return false
+            return playing >= 0 && pos < playing - readAhead
+        }
+
         /** How far the player may read, and the relay fetch: unlimited unless it reads ahead and plays. Under [lock]. */
         private fun limit(): Long = readAhead?.takeIf { playing >= 0 }?.let { playing + it } ?: Long.MAX_VALUE
 
@@ -300,11 +306,19 @@ internal object StreamRelay {
                             lock.notifyAll()
                         }
                         // Held back at the pace limit too: woken as the player plays on.
+                        // A read left far behind where it plays (an old connection after a jump ahead) ends, rather
+                        // than pull in everything it passes.
+                        if (leftBehind(pos)) throw IOException("Left behind where it plays")
                         while ((!(headReady && held.endOf(pos) > pos) || pos >= limit()) && !failed && !closed) {
+                            if (leftBehind(pos)) {
+                                if (wanted == pos) wanted = -1
+                                throw IOException("Left behind where it plays")
+                            }
                             wanted = pos
                             lock.wait()
                         }
                         if (wanted == pos) wanted = -1
+                        if (leftBehind(pos)) throw IOException("Left behind where it plays")
                         if (headReady) minOf(held.endOf(pos), limit()) else pos
                     }
                     if (available <= pos) throw IOException("Stream ended early")
@@ -323,10 +337,17 @@ internal object StreamRelay {
                 // A fragmented MP4's header first: nothing plays until it's patched.
                 if (!headReady) return@synchronized held.endOf(0).let { it to CHUNK }
                 if (total < 0) return@synchronized playhead to CHUNK
-                val gap = nextFillGap(held::cachedLength, playhead, total) ?: return@synchronized null
-                val ahead = gap.position >= playhead
                 val readAhead = readAhead
-                val window = if (playing >= 0) limit() else playhead + (readAhead ?: 0)
+                // From where a reader waits for bytes; else, paced, from where it plays, not where some old reader
+                // last was: nothing behind it is fetched for its own sake.
+                val from = when {
+                    wanted >= 0 && !leftBehind(wanted) -> wanted
+                    readAhead != null && playing >= 0 -> playing
+                    else -> playhead
+                }
+                val gap = nextFillGap(held::cachedLength, from, total) ?: return@synchronized null
+                val ahead = gap.position >= from
+                val window = if (playing >= 0) limit() else from + (readAhead ?: 0)
                 if (readAhead == null || (ahead && gap.position < window)) {
                     return@synchronized gap.position to minOf(gap.length, CHUNK)
                 }
@@ -401,7 +422,8 @@ internal object StreamRelay {
                         if (!headReady) headReady = patchHeader(raf)
                         lock.notifyAll()
                         // The player went elsewhere and waits there: leave this chunk for the bytes it needs.
-                        code == 206 && wanted >= 0 && (wanted < start || wanted >= start + length) && held.endOf(wanted) == wanted
+                        code == 206 && wanted >= 0 && !leftBehind(wanted) &&
+                            (wanted < start || wanted >= start + length) && held.endOf(wanted) == wanted
                     }
                     pos = end
                     if (redirect) break
