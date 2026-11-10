@@ -50,12 +50,21 @@ fun createDesktopAppGraph(quitApp: () -> Unit): AppGraph {
         library = library,
         downloads = downloads,
         player = DownloadAwareAudioPlayer(
-            DesktopAudioPlayer { url ->
+            DesktopAudioPlayer(
+                // The relay serves an ordinary enclosure only a little past where it plays.
+                onProgress = StreamRelay::reportPlayback,
+            ) { url ->
                 val located = locate(url)
                 when {
                     // Downloads and the playback cache: YouTube's audio needs the same header fix as the relay applies.
                     url.startsWith("file:") -> url.also { runCatching { Mp4Header.clearFragmentedDurations(File(URI(url))) } }
-                    located == url -> RedirectResolver.resolve(url)
+                    // An ordinary enclosure, past its tracking redirects (fetched in chunks, every one through
+                    // podtrac and the like would count as a download): through the relay, fetched in chunks from
+                    // where the player reads; straight from the server when it can't be relayed.
+                    located == url -> RedirectResolver.resolve(url).let { final ->
+                        val extension = explicitAudioExtension(final) ?: explicitAudioExtension(url)
+                        extension?.let { StreamRelay.relayOrNull(final, it) } ?: final
+                    }
                     // A resolved YouTube stream without a file extension: JavaFX needs one to play it.
                     explicitAudioExtension(located) == null -> StreamRelay.url(located)
                     else -> located

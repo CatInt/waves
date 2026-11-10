@@ -16,23 +16,29 @@ import java.util.UUID
 import java.util.concurrent.Executors
 
 /**
- * Plays a resolved YouTube stream through 127.0.0.1, for two reasons:
+ * Plays streamed episodes through 127.0.0.1, from a local file the relay downloads in bounded chunks, answering the
+ * player's range requests from it and waiting for bytes that haven't arrived yet.
  *
- * - JavaFX Media picks its demuxer from the URL's extension or a Content-Type it knows, and a stream URL
- *   (`/videoplayback?…`, sent as `audio/mp4`) has neither, so JavaFX rejects it as MEDIA_UNSUPPORTED.
- * - YouTube throttles open-ended requests to a crawl but serves bounded ranges fast. The audio is a fragmented
- *   MP4, which JavaFX reads end to end (one request per fragment) before it can start.
+ * - A resolved YouTube stream ([url]): JavaFX Media picks its demuxer from the URL's extension or a Content-Type it
+ *   knows, and a stream URL (`/videoplayback?…`, sent as `audio/mp4`) has neither. YouTube also throttles open-ended
+ *   requests to a crawl but serves bounded ranges fast. Its audio is a fragmented MP4, which JavaFX reads end to end
+ *   (one request per fragment) before it can start, so the whole stream is fetched.
+ * - An ordinary enclosure ([relayOrNull]): once it plays, only up to [READ_AHEAD_BYTES] past where it plays is
+ *   fetched and served ([reportPlayback]). JavaFX reads a file as fast as it's served, far ahead of what it plays, so
+ *   pacing it by where it reads alone would still fetch the whole episode.
  *
- * So the relay downloads the stream in bounded chunks into a temp file and answers the player's range
- * requests from that file, waiting for bytes that haven't arrived yet.
+ * Chunks come from where the player reads ([nextFillGap]): after a seek the next chunk starts there, and a chunk the
+ * player has left is cut short.
  */
 internal object StreamRelay {
     private const val MAX_STREAMS = 4
-    private const val CHUNK = 8L * 1024 * 1024
+    private const val CHUNK = 4L * 1024 * 1024
+    /** How far ahead of the player an ordinary enclosure is fetched. */
+    const val READ_AHEAD_BYTES = 8L * 1024 * 1024
     private val contentTypes = mapOf("m4a" to "audio/x-m4a", "mp4" to "audio/x-m4a", "mp3" to "audio/mpeg")
 
     private val client: HttpClient = HttpClient.newBuilder()
-        .followRedirects(HttpClient.Redirect.NORMAL)
+        .followRedirects(HttpClient.Redirect.ALWAYS)
         .connectTimeout(Duration.ofSeconds(15))
         .build()
 
@@ -47,17 +53,44 @@ internal object StreamRelay {
         }
     }
 
-    /** A loopback URL that plays [remote] as a `.[extension]` file. */
-    fun url(remote: String, extension: String = "m4a"): String {
+    /** A loopback URL that plays the resolved YouTube stream [remote] as a `.[extension]` file, fetched whole. */
+    fun url(remote: String, extension: String = "m4a"): String = add(Stream(remote, extension, readAhead = null)).first
+
+    /**
+     * A loopback URL that plays the ordinary enclosure [remote] (already past its redirects) as a `.[extension]`
+     * file, fetched only a little ahead of the player; null when it can't be relayed (the server doesn't serve byte
+     * ranges or say how big the file is, or doesn't answer within [timeoutMs]), and the player streams it directly.
+     */
+    fun relayOrNull(remote: String, extension: String, timeoutMs: Long = 15_000): String? {
+        if (extension !in contentTypes) return null
+        val (url, stream) = add(Stream(remote, extension, readAhead = READ_AHEAD_BYTES))
+        if (stream.awaitTotal(timeoutMs) > 0 && stream.servesRanges) return url
+        synchronized(streams) { streams.values.remove(stream) }
+        stream.close()
+        return null
+    }
+
+    /**
+     * Where the player is in a relayed [url]: [positionMs] of [durationMs]. An ordinary enclosure is then served and
+     * fetched only up to [READ_AHEAD_BYTES] past that point (by its share of the file's size).
+     */
+    fun reportPlayback(url: String, positionMs: Long, durationMs: Long) {
+        if (durationMs <= 0 || !url.startsWith("http://127.0.0.1:")) return
+        val token = url.substringAfterLast('/').substringBefore('.')
+        val stream = synchronized(streams) { streams[token] } ?: return
+        stream.reportPlayback(positionMs.toDouble() / durationMs)
+    }
+
+    private fun add(stream: Stream): Pair<String, Stream> {
         val token = UUID.randomUUID().toString()
         synchronized(streams) {
-            streams[token] = Stream(remote, extension)
+            streams[token] = stream
             while (streams.size > MAX_STREAMS) {
                 val eldest = streams.keys.first()
                 streams.remove(eldest)?.close()
             }
         }
-        return "http://127.0.0.1:${server.address.port}/$token.$extension"
+        return "http://127.0.0.1:${server.address.port}/$token.${stream.extension}" to stream
     }
 
     private fun handle(exchange: HttpExchange) = exchange.use {
@@ -105,12 +138,65 @@ internal object StreamRelay {
         }
     }
 
-    private class Stream(val remote: String, val extension: String) {
+    /** Byte ranges held, as sorted, non-touching [start, end) pairs. Not thread-safe. */
+    internal class Spans {
+        private val starts = ArrayList<Long>()
+        private val ends = ArrayList<Long>()
+
+        fun add(start: Long, end: Long) {
+            if (end <= start) return
+            var s = start
+            var e = end
+            var i = 0
+            while (i < starts.size && ends[i] < s) i++
+            while (i < starts.size && starts[i] <= e) {
+                s = minOf(s, starts[i])
+                e = maxOf(e, ends[i])
+                starts.removeAt(i)
+                ends.removeAt(i)
+            }
+            starts.add(i, s)
+            ends.add(i, e)
+        }
+
+        /** Where the run of held bytes from [position] ends; [position] itself when it isn't held. */
+        fun endOf(position: Long): Long {
+            for (i in starts.indices) if (position >= starts[i] && position < ends[i]) return ends[i]
+            return position
+        }
+
+        /** Like `Cache.getCachedLength`: held bytes from [position] (positive), or missing ones up to the next (negative). */
+        fun cachedLength(position: Long, length: Long): Long {
+            val limit = if (Long.MAX_VALUE - position < length) Long.MAX_VALUE else position + length
+            val end = endOf(position)
+            if (end > position) return minOf(end, limit) - position
+            val next = starts.firstOrNull { it > position } ?: Long.MAX_VALUE
+            return -(minOf(next, limit) - position)
+        }
+
+        override fun toString() = starts.indices.joinToString { "${starts[it]}-${ends[it]}" }
+    }
+
+    /**
+     * One relayed file. A fetch thread downloads it a chunk at a time from where the player reads ([playhead]),
+     * whole ([readAhead] null) or only that far ahead of the player; readers wait for the bytes they need.
+     */
+    private class Stream(val remote: String, val extension: String, val readAhead: Long?) {
         private val file: File = File.createTempFile("waves-stream", ".$extension").apply { deleteOnExit() }
         private val lock = Object()
+        private val held = Spans()
         private var total = -1L
-        private var filled = 0L
         private var failed = false
+        /** A fragmented MP4's header needs patching before the player may read it; for other files it's ready. */
+        private var headReady = extension != "m4a" && extension != "mp4"
+        /** Where the player reads (or last asked to read). */
+        private var playhead = 0L
+        /** A position a reader waits at, or -1. */
+        private var wanted = -1L
+        /** Byte the player plays at (estimated from its time), -1 until it reports one: no pacing before then. */
+        private var playing = -1L
+        @Volatile var servesRanges = true
+            private set
         @Volatile private var closed = false
         @Volatile private var done = false
 
@@ -124,8 +210,25 @@ internal object StreamRelay {
             if (done) file.delete()
         }
 
-        fun awaitTotal(): Long = synchronized(lock) {
-            while (total < 0 && !failed && !closed) lock.wait()
+        fun reportPlayback(fraction: Double) = synchronized(lock) {
+            if (total <= 0) return@synchronized
+            val at = (fraction.coerceIn(0.0, 1.0) * total).toLong()
+            if (at != playing) {
+                playing = at
+                lock.notifyAll()
+            }
+        }
+
+        /** How far the player may read, and the relay fetch: unlimited unless it reads ahead and plays. Under [lock]. */
+        private fun limit(): Long = if (readAhead == null || playing < 0) Long.MAX_VALUE else playing + readAhead
+
+        fun awaitTotal(timeoutMs: Long = Long.MAX_VALUE): Long = synchronized(lock) {
+            val deadline = if (timeoutMs == Long.MAX_VALUE) Long.MAX_VALUE else System.currentTimeMillis() + timeoutMs
+            while (total < 0 && !failed && !closed) {
+                val left = deadline - System.currentTimeMillis()
+                if (left <= 0) break
+                lock.wait(minOf(left, 1_000))
+            }
             total
         }
 
@@ -136,8 +239,17 @@ internal object StreamRelay {
                 var pos = start
                 while (pos <= end) {
                     val available = synchronized(lock) {
-                        while (filled <= pos && !failed && !closed) lock.wait()
-                        filled
+                        if (playhead != pos) {
+                            playhead = pos
+                            lock.notifyAll()
+                        }
+                        // Held back at the pace limit too: woken as the player plays on.
+                        while ((!(headReady && held.endOf(pos) > pos) || pos >= limit()) && !failed && !closed) {
+                            wanted = pos
+                            lock.wait()
+                        }
+                        if (wanted == pos) wanted = -1
+                        if (headReady) minOf(held.endOf(pos), limit()) else pos
                     }
                     if (available <= pos) throw IOException("Stream ended early")
                     raf.seek(pos)
@@ -149,60 +261,38 @@ internal object StreamRelay {
             }
         }
 
-        /** Patches the header once it's all in [raf] ([written] bytes); true when readers may proceed. */
-        private fun patchHeader(raf: RandomAccessFile, written: Long, complete: Boolean): Boolean {
-            val head = ByteArray(minOf(written, Mp4Header.SCAN_BYTES.toLong()).toInt())
-            raf.seek(0)
-            raf.readFully(head)
-            if (!Mp4Header.clearFragmentedDurations(head) && !complete && written < Mp4Header.SCAN_BYTES) return false
-            raf.seek(0)
-            raf.write(head)
-            return true
+        /** The next chunk to fetch (start, length); null once there's nothing left to fetch, or it's closed. */
+        private fun next(): Pair<Long, Long>? = synchronized(lock) {
+            while (!closed) {
+                // A fragmented MP4's header first: nothing plays until it's patched.
+                if (!headReady) return@synchronized held.endOf(0).let { it to CHUNK }
+                if (total < 0) return@synchronized playhead to CHUNK
+                val gap = nextFillGap(held::cachedLength, playhead, total) ?: return@synchronized null
+                val ahead = gap.position >= playhead
+                val window = if (playing >= 0) limit() else playhead + (readAhead ?: 0)
+                if (readAhead == null || (ahead && gap.position < window)) {
+                    return@synchronized gap.position to minOf(gap.length, CHUNK)
+                }
+                // Far enough ahead of the player (or only gaps behind it): wait for it to move on.
+                lock.wait()
+            }
+            null
         }
 
         private fun fill() {
             try {
                 RandomAccessFile(file, "rw").use { raf ->
-                    val buffer = ByteArray(64 * 1024)
-                    var written = 0L
-                    var headerPatched = false
-                    while (!closed && (total < 0 || written < total)) {
-                        val request = HttpRequest.newBuilder(URI(remote))
-                            .header("Range", "bytes=$written-${written + CHUNK - 1}")
-                            .build()
-                        val response = client.send(request, HttpResponse.BodyHandlers.ofInputStream())
-                        val code = response.statusCode()
-                        if (code != 200 && code != 206) {
-                            response.body().close()
-                            throw IOException("HTTP $code")
+                    var failures = 0
+                    while (!closed) {
+                        val (start, length) = next() ?: break
+                        System.err.println("WavesRelay: chunk at $start (player at $playhead, size $total)")
+                        try {
+                            fetch(raf, start, length)
+                            failures = 0
+                        } catch (e: IOException) {
+                            if (++failures >= 3) throw e
+                            Thread.sleep(500L * failures)
                         }
-                        if (total < 0) {
-                            val size = if (code == 206) {
-                                response.headers().firstValue("Content-Range").orElse("").substringAfterLast('/').toLongOrNull()
-                            } else {
-                                response.headers().firstValueAsLong("Content-Length").orElse(-1).takeIf { it >= 0 }
-                            }
-                            synchronized(lock) {
-                                total = size ?: throw IOException("Unknown stream length")
-                                lock.notifyAll()
-                            }
-                        }
-                        response.body().use { input ->
-                            while (!closed) {
-                                val n = input.read(buffer)
-                                if (n < 0) break
-                                raf.seek(written)
-                                raf.write(buffer, 0, n)
-                                written += n
-                                // Readers only see bytes once the MP4 header has been patched.
-                                if (!headerPatched) headerPatched = patchHeader(raf, written, written >= total)
-                                if (headerPatched) synchronized(lock) {
-                                    filled = written
-                                    lock.notifyAll()
-                                }
-                            }
-                        }
-                        if (code == 200) break // the whole body came at once
                     }
                 }
             } catch (_: Exception) {
@@ -212,6 +302,67 @@ internal object StreamRelay {
                 synchronized(lock) { lock.notifyAll() }
                 if (closed) file.delete()
             }
+        }
+
+        /** Fetches [length] bytes from [start] into [raf], stopping early when a reader waits for bytes elsewhere. */
+        private fun fetch(raf: RandomAccessFile, start: Long, length: Long) {
+            val request = HttpRequest.newBuilder(URI(remote))
+                .header("Range", "bytes=$start-${start + length - 1}")
+                .build()
+            val response = client.send(request, HttpResponse.BodyHandlers.ofInputStream())
+            val code = response.statusCode()
+            if (code != 200 && code != 206) {
+                response.body().close()
+                throw IOException("HTTP $code")
+            }
+            // Ranges ignored: the whole file from its start comes back.
+            val from = if (code == 200) 0L else start
+            if (code == 200) servesRanges = false
+            if (total < 0) {
+                val size = if (code == 206) {
+                    response.headers().firstValue("Content-Range").orElse("").substringAfterLast('/').toLongOrNull()
+                } else {
+                    response.headers().firstValueAsLong("Content-Length").orElse(-1).takeIf { it >= 0 }
+                }
+                synchronized(lock) {
+                    total = size ?: throw IOException("Unknown stream length")
+                    lock.notifyAll()
+                }
+            }
+            val until = if (code == 200) total else start + length
+            response.body().use { input ->
+                val buffer = ByteArray(64 * 1024)
+                var pos = from
+                while (!closed && pos < until) {
+                    val n = input.read(buffer, 0, minOf(buffer.size.toLong(), until - pos).toInt())
+                    if (n < 0) break
+                    raf.seek(pos)
+                    raf.write(buffer, 0, n)
+                    val end = pos + n
+                    val redirect = synchronized(lock) {
+                        held.add(pos, end)
+                        if (!headReady) headReady = patchHeader(raf)
+                        lock.notifyAll()
+                        // The player went elsewhere and waits there: leave this chunk for the bytes it needs.
+                        code == 206 && wanted >= 0 && (wanted < start || wanted >= start + length) && held.endOf(wanted) == wanted
+                    }
+                    pos = end
+                    if (redirect) break
+                }
+            }
+        }
+
+        /** Patches a fragmented MP4's header once all of it is held; true when readers may proceed. Under [lock]. */
+        private fun patchHeader(raf: RandomAccessFile): Boolean {
+            val scan = minOf(total.takeIf { it > 0 } ?: Long.MAX_VALUE, Mp4Header.SCAN_BYTES.toLong())
+            val have = held.endOf(0)
+            val head = ByteArray(minOf(have, scan).toInt())
+            raf.seek(0)
+            raf.readFully(head)
+            if (!Mp4Header.clearFragmentedDurations(head) && have < scan) return false
+            raf.seek(0)
+            raf.write(head)
+            return true
         }
     }
 }

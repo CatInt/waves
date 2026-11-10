@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -26,6 +27,8 @@ import kotlinx.coroutines.withContext
  * called from any thread. [state] is a thread-safe [StateFlow].
  */
 class DesktopAudioPlayer(
+    /** Told, as it plays, the URL it plays and where in it it is (position and duration, ms): the relay paces by it. */
+    private val onProgress: (url: String, positionMs: Long, durationMs: Long) -> Unit = { _, _, _ -> },
     private val resolveUrl: suspend (String) -> String = { RedirectResolver.resolve(it) },
 ) : AudioPlayer {
 
@@ -39,6 +42,7 @@ class DesktopAudioPlayer(
     // ---- confined to the JavaFX thread (or written before the player exists) ----
     @Volatile private var generation = 0L
     @Volatile private var player: MediaPlayer? = null
+    private var loadedUrl: String? = null
     private var ready = false
     private var ended = false
     @Volatile private var wantPlaying = false
@@ -100,6 +104,7 @@ class DesktopAudioPlayer(
             return
         }
         player = mp
+        loadedUrl = url
         ready = false
         ended = false
         mp.setOnReady {
@@ -166,6 +171,9 @@ class DesktopAudioPlayer(
             val mp = player ?: return@fx
             ended = false
             if (ready) mp.seek(Duration.millis(target.toDouble()))
+            // At once, not at the next tick (none while paused): the relay paces by it, and a jump back must hold
+            // it back again.
+            if (ready) loadedUrl?.let { onProgress(it, target, _state.value.durationMs) }
         }
     }
 
@@ -193,7 +201,7 @@ class DesktopAudioPlayer(
             return
         }
         val flags = DesktopStateMapping.flags(mp.status, wantPlaying, ended)
-        _state.update { s ->
+        val published = _state.updateAndGet { s ->
             val duration = PlayerMath.durationMs(DesktopStateMapping.millisOrNull(mp.totalDuration), s.episode)
             val position = if (ended) duration else DesktopStateMapping.millisOrNull(mp.currentTime) ?: s.positionMs
             s.copy(
@@ -204,6 +212,7 @@ class DesktopAudioPlayer(
                 isEnded = ended,
             )
         }
+        if (ready) loadedUrl?.let { onProgress(it, published.positionMs, published.durationMs) }
     }
 
     private fun fail(gen: Long, message: String) {
@@ -223,6 +232,7 @@ class DesktopAudioPlayer(
             it.dispose()
         }
         player = null
+        loadedUrl = null
         ready = false
     }
 
