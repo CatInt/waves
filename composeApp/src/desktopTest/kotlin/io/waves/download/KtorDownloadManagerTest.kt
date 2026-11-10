@@ -72,6 +72,7 @@ class KtorDownloadManagerTest {
         rangeChunkBytes: Long = 8L * 1024 * 1024,
         copyFromPlayerCache: suspend (Episode, String) -> Long? = { _, _ -> null },
         fillPlayerCache: (suspend (Episode) -> Boolean)? = null,
+        fillPlayerCacheAsFile: (suspend (Episode, String) -> Long?)? = null,
         onLocalCopy: (EpisodeId, String) -> Unit = { _, _ -> },
     ): KtorDownloadManager {
         val scope = CoroutineScope(SupervisorJob() + io).also { scopes += it }
@@ -79,7 +80,8 @@ class KtorDownloadManagerTest {
         return KtorDownloadManager(
             driver, client, dir.absolutePath, scope, ioContext = io, clock = { now }, progressIntervalMs = 0,
             resumeOnStart = resumeOnStart, locate = locate, rangeChunkBytes = rangeChunkBytes,
-            copyFromPlayerCache = copyFromPlayerCache, fillPlayerCache = fillPlayerCache, onLocalCopy = onLocalCopy,
+            copyFromPlayerCache = copyFromPlayerCache, fillPlayerCache = fillPlayerCache,
+            fillPlayerCacheAsFile = fillPlayerCacheAsFile, onLocalCopy = onLocalCopy,
         )
     }
 
@@ -397,6 +399,36 @@ class KtorDownloadManagerTest {
         assertEquals(listOf(ep.id), filled)
         assertEquals(0, requests.size)
         assertEquals(emptyList(), cacheFiles().filter { !it.endsWith(".accessed") })
+    }
+
+    @Test fun cachingAYoutubeEpisodeFillsThePlayersCacheThenKeepsItAsAFile() = runBlocking<Unit> {
+        val stream = "https://rr1---sn-x.googlevideo.com/videoplayback?id=1"
+        val filled = mutableListOf<String>()
+        val copies = mutableListOf<String>()
+        val m = newManager(
+            locate = { stream },
+            fillPlayerCache = { error("not for a resolved stream") },
+            fillPlayerCacheAsFile = { e, dest -> filled += e.audioUrl; File(dest).writeBytes(payload); payload.size.toLong() },
+            onLocalCopy = { _, path -> copies += path },
+        )
+        val ep = episode()
+        m.cache(ep)
+        eventually { copies.isNotEmpty() }
+        // Fetched once, by the player's cache, from the stream; nothing of its own.
+        assertEquals(listOf(stream), filled)
+        assertEquals(0, requests.size)
+        val file = File(URI(assertNotNull(m.playableUri(ep))))
+        assertContentEquals(payload, file.readBytes())
+        assertEquals(listOf(file.canonicalPath), copies.map { File(it).canonicalPath })
+    }
+
+    @Test fun aYoutubeEpisodeTheFillCantTakeIsFetchedAsAFile() = runBlocking<Unit> {
+        val m = newManager(locate = { it + "&resolved=1" }, fillPlayerCacheAsFile = { _, _ -> null })
+        val ep = episode()
+        m.cache(ep)
+        eventually { m.playableUri(ep)?.startsWith("file:") == true }
+        assertTrue(requests.isNotEmpty())
+        assertContentEquals(payload, File(URI(assertNotNull(m.playableUri(ep)))).readBytes())
     }
 
     @Test fun cachingFallsBackToAFileWhenThePlayersCacheIsUnavailable() = runBlocking<Unit> {
