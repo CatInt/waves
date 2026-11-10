@@ -1,5 +1,7 @@
 package io.waves.download
 
+import io.waves.model.Episode
+
 import app.cash.sqldelight.db.SqlDriver
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.java.Java
@@ -20,9 +22,12 @@ fun createDownloadManager(
     scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
     client: HttpClient = HttpClient(Java) { downloadDefaults() },
     locate: suspend (String) -> String = { it },
+    fillPlayerCacheAsFile: (suspend (Episode, String, String) -> Long?)? = null,
 ): KtorDownloadManager {
     directory.mkdirs()
-    return KtorDownloadManager(driver, client, directory.absolutePath, scope, locate = locate)
+    return KtorDownloadManager(
+        driver, client, directory.absolutePath, scope, locate = locate, fillPlayerCacheAsFile = fillPlayerCacheAsFile,
+    )
 }
 
 /** Same as above, sharing [library]'s connection. [locate] turns a YouTube watch URL into an audio stream. */
@@ -30,7 +35,9 @@ fun createDownloadManager(
     library: SqlLibraryRepository,
     directory: File = defaultDownloadDirectory(),
     locate: suspend (String) -> String = { it },
-): KtorDownloadManager = createDownloadManager(library.driver, directory, locate = locate)
+    /** Caching while listening keeps what the player streams instead of fetching a second copy (see [KtorDownloadManager]). */
+    fillPlayerCacheAsFile: (suspend (Episode, String, String) -> Long?)? = null,
+): KtorDownloadManager = createDownloadManager(library.driver, directory, locate = locate, fillPlayerCacheAsFile = fillPlayerCacheAsFile)
 
 /** `episodes` next to waves.db, in [io.waves.data.appDataDirectory]. */
 fun defaultDownloadDirectory(): File = File(io.waves.data.defaultDatabaseFile().parentFile, "episodes")

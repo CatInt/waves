@@ -14,6 +14,8 @@ import java.net.http.HttpResponse
 import java.time.Duration
 import java.util.UUID
 import java.util.concurrent.Executors
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * Plays streamed episodes through 127.0.0.1, from a local file the relay downloads in bounded chunks, answering the
@@ -29,6 +31,9 @@ import java.util.concurrent.Executors
  *
  * Chunks come from where the player reads ([nextFillGap]): after a seek the next chunk starts there, and a chunk the
  * player has left is cut short.
+ *
+ * Caching an episode while it plays ([completeTo]) lets its stream fetch the rest, ahead of the player and then the
+ * gaps behind, and keeps the whole file: the episode is fetched once.
  */
 internal object StreamRelay {
     private const val MAX_STREAMS = 4
@@ -53,21 +58,42 @@ internal object StreamRelay {
         }
     }
 
-    /** A loopback URL that plays the resolved YouTube stream [remote] as a `.[extension]` file, fetched whole. */
-    fun url(remote: String, extension: String = "m4a"): String = add(Stream(remote, extension, readAhead = null)).first
+    /**
+     * A loopback URL that plays the resolved YouTube stream [remote] as a `.[extension]` file, fetched whole. [episode]
+     * names it for [completeTo] (the episode's own address).
+     */
+    fun url(remote: String, extension: String = "m4a", episode: String? = null): String =
+        add(Stream(remote, extension, readAhead = null, episode = episode)).first
 
     /**
      * A loopback URL that plays the ordinary enclosure [remote] (already past its redirects) as a `.[extension]`
      * file, fetched only a little ahead of the player; null when it can't be relayed (the server doesn't serve byte
      * ranges or say how big the file is, or doesn't answer within [timeoutMs]), and the player streams it directly.
      */
-    fun relayOrNull(remote: String, extension: String, timeoutMs: Long = 15_000): String? {
+    fun relayOrNull(remote: String, extension: String, episode: String? = null, timeoutMs: Long = 15_000): String? {
         if (extension !in contentTypes) return null
-        val (url, stream) = add(Stream(remote, extension, readAhead = READ_AHEAD_BYTES))
+        val (url, stream) = add(Stream(remote, extension, readAhead = READ_AHEAD_BYTES, episode = episode))
         if (stream.awaitTotal(timeoutMs) > 0 && stream.servesRanges) return url
         synchronized(streams) { streams.values.remove(stream) }
         stream.close()
         return null
+    }
+
+    /**
+     * Fetches all of [episode]'s relayed stream (its own address, as given to [url] or [relayOrNull]) and copies it to
+     * [dest], returning its size: ahead of the player first, then the gaps behind, while it goes on playing. Null when
+     * the episode isn't being relayed, or its stream fails or closes first; the caller fetches it another way then.
+     */
+    suspend fun completeTo(episode: String, dest: File): Long? {
+        val stream = synchronized(streams) { streams.values.lastOrNull { it.episode == episode } } ?: return null
+        System.err.println("WavesRelay: caching $episode: fetching the rest")
+        stream.fetchAll()
+        while (!stream.isComplete()) {
+            if (stream.isOver()) return null.also { System.err.println("WavesRelay: caching $episode: stream ended first") }
+            kotlinx.coroutines.delay(250)
+        }
+        return withContext(Dispatchers.IO) { stream.copyTo(dest) }
+            .also { System.err.println("WavesRelay: caching $episode: kept ${it ?: "nothing"} bytes as $dest") }
     }
 
     /**
@@ -181,7 +207,9 @@ internal object StreamRelay {
      * One relayed file. A fetch thread downloads it a chunk at a time from where the player reads ([playhead]),
      * whole ([readAhead] null) or only that far ahead of the player; readers wait for the bytes they need.
      */
-    private class Stream(val remote: String, val extension: String, val readAhead: Long?) {
+    private class Stream(val remote: String, val extension: String, readAhead: Long?, val episode: String? = null) {
+        /** How far past where it plays the player may read and the relay fetch; null to fetch it all. Under [lock]. */
+        private var readAhead: Long? = readAhead
         private val file: File = File.createTempFile("waves-stream", ".$extension").apply { deleteOnExit() }
         private val lock = Object()
         private val held = Spans()
@@ -210,6 +238,34 @@ internal object StreamRelay {
             if (done) file.delete()
         }
 
+        /** From now on fetches the whole file: ahead of the player, then the gaps behind. */
+        fun fetchAll() = synchronized(lock) {
+            readAhead = null
+            lock.notifyAll()
+        }
+
+        fun isComplete(): Boolean = synchronized(lock) { total > 0 && held.endOf(0) >= total }
+
+        /** Failed, or closed (evicted): it won't complete. */
+        fun isOver(): Boolean = synchronized(lock) { failed || closed }
+
+        /** Copies the whole file (once [isComplete]) to [dest], beside it first, returning its size; null if it fails. */
+        fun copyTo(dest: File): Long? {
+            val size = synchronized(lock) { total.takeIf { isCompleteLocked() } } ?: return null
+            val temp = File(dest.path + ".copying")
+            return try {
+                dest.parentFile?.mkdirs()
+                file.copyTo(temp, overwrite = true)
+                if (temp.length() != size || !temp.renameTo(dest)) null else size
+            } catch (_: Exception) {
+                null
+            } finally {
+                temp.delete()
+            }
+        }
+
+        private fun isCompleteLocked() = total > 0 && held.endOf(0) >= total
+
         fun reportPlayback(fraction: Double) = synchronized(lock) {
             if (total <= 0) return@synchronized
             val at = (fraction.coerceIn(0.0, 1.0) * total).toLong()
@@ -220,7 +276,7 @@ internal object StreamRelay {
         }
 
         /** How far the player may read, and the relay fetch: unlimited unless it reads ahead and plays. Under [lock]. */
-        private fun limit(): Long = if (readAhead == null || playing < 0) Long.MAX_VALUE else playing + readAhead
+        private fun limit(): Long = readAhead?.takeIf { playing >= 0 }?.let { playing + it } ?: Long.MAX_VALUE
 
         fun awaitTotal(timeoutMs: Long = Long.MAX_VALUE): Long = synchronized(lock) {
             val deadline = if (timeoutMs == Long.MAX_VALUE) Long.MAX_VALUE else System.currentTimeMillis() + timeoutMs
@@ -269,6 +325,7 @@ internal object StreamRelay {
                 if (total < 0) return@synchronized playhead to CHUNK
                 val gap = nextFillGap(held::cachedLength, playhead, total) ?: return@synchronized null
                 val ahead = gap.position >= playhead
+                val readAhead = readAhead
                 val window = if (playing >= 0) limit() else playhead + (readAhead ?: 0)
                 if (readAhead == null || (ahead && gap.position < window)) {
                     return@synchronized gap.position to minOf(gap.length, CHUNK)

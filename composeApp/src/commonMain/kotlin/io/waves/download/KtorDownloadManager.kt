@@ -92,12 +92,13 @@ class KtorDownloadManager(
      */
     private val fillPlayerCache: (suspend (Episode) -> Boolean)? = null,
     /**
-     * For a resolved stream (YouTube): fills the player's own cache the same way, fetching [Episode.audioUrl] (the
-     * stream), then copies the whole of it to the given path, returning its size. So it's fetched once, from where
-     * the player is, and still kept as a file, which plays offline without resolving the stream again. Null when
-     * that can't be done, and the file is fetched as before.
+     * Completes what the player streams of the episode, from the source address it plays (the resolved stream for
+     * YouTube), and copies the whole of it to the given path, returning its size. So it's fetched once, from where the
+     * player is, and kept as a file, which plays offline without resolving the stream again. Used for resolved streams,
+     * and for every episode where there's no [fillPlayerCache] (the Mac, whose relay streams them). Null when that
+     * can't be done, and the file is fetched as before.
      */
-    private val fillPlayerCacheAsFile: (suspend (Episode, String) -> Long?)? = null,
+    private val fillPlayerCacheAsFile: (suspend (episode: Episode, source: String, dest: String) -> Long?)? = null,
     /** Told the path of each complete local copy (download or cache file) as it appears, so a player can switch to it. */
     private val onLocalCopy: (EpisodeId, String) -> Unit = { _, _ -> },
 ) : DownloadManager {
@@ -271,8 +272,9 @@ class KtorDownloadManager(
                     val ext = explicitAudioExtension(source)?.takeIf { resolved } ?: audioExtension(episode.audioUrl)
                     path = "$cacheDirectory/$key.$ext"
                     stamp(key)
-                    val filled = resolved && fillPlayerCacheAsFile != null &&
-                        permits.withPermit { fillPlayerCacheAsFile.invoke(episode.copy(audioUrl = source), path!!) } != null
+                    val dest = path!!
+                    val filled = (resolved || fillPlayerCache == null) && fillPlayerCacheAsFile != null &&
+                        permits.withPermit { fillPlayerCacheAsFile.invoke(episode, source, dest) } != null
                     // A resolved stream URL expires and changes between attempts; its bytes can't be resumed.
                     if (!filled) permits.withPermit { transfer(source, path, discardPartial = resolved) { _, _ -> } }
                     stamp(key)

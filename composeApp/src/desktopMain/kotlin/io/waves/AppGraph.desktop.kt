@@ -43,7 +43,13 @@ fun createDesktopAppGraph(quitApp: () -> Unit): AppGraph {
         fallbacks = listOf(YtDlpSource()),
     )::locate
     // Downloads keep their own client (no request timeout for large files, identity encoding, no cache).
-    val downloads = createDownloadManager(library, locate = locate)
+    val downloads = createDownloadManager(
+        library,
+        locate = locate,
+        // Caching while listening completes what the relay streams and keeps that file: one download, from where it
+        // plays.
+        fillPlayerCacheAsFile = { episode, _, dest -> StreamRelay.completeTo(episode.audioUrl, File(dest)) },
+    )
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     return AppGraph(
         http = http,
@@ -63,10 +69,10 @@ fun createDesktopAppGraph(quitApp: () -> Unit): AppGraph {
                     // where the player reads; straight from the server when it can't be relayed.
                     located == url -> RedirectResolver.resolve(url).let { final ->
                         val extension = explicitAudioExtension(final) ?: explicitAudioExtension(url)
-                        extension?.let { StreamRelay.relayOrNull(final, it) } ?: final
+                        extension?.let { StreamRelay.relayOrNull(final, it, episode = url) } ?: final
                     }
                     // A resolved YouTube stream without a file extension: JavaFX needs one to play it.
-                    explicitAudioExtension(located) == null -> StreamRelay.url(located)
+                    explicitAudioExtension(located) == null -> StreamRelay.url(located, episode = url)
                     else -> located
                 }
             },

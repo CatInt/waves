@@ -72,7 +72,7 @@ class KtorDownloadManagerTest {
         rangeChunkBytes: Long = 8L * 1024 * 1024,
         copyFromPlayerCache: suspend (Episode, String) -> Long? = { _, _ -> null },
         fillPlayerCache: (suspend (Episode) -> Boolean)? = null,
-        fillPlayerCacheAsFile: (suspend (Episode, String) -> Long?)? = null,
+        fillPlayerCacheAsFile: (suspend (Episode, String, String) -> Long?)? = null,
         onLocalCopy: (EpisodeId, String) -> Unit = { _, _ -> },
     ): KtorDownloadManager {
         val scope = CoroutineScope(SupervisorJob() + io).also { scopes += it }
@@ -408,7 +408,7 @@ class KtorDownloadManagerTest {
         val m = newManager(
             locate = { stream },
             fillPlayerCache = { error("not for a resolved stream") },
-            fillPlayerCacheAsFile = { e, dest -> filled += e.audioUrl; File(dest).writeBytes(payload); payload.size.toLong() },
+            fillPlayerCacheAsFile = { _, source, dest -> filled += source; File(dest).writeBytes(payload); payload.size.toLong() },
             onLocalCopy = { _, path -> copies += path },
         )
         val ep = episode()
@@ -422,8 +422,25 @@ class KtorDownloadManagerTest {
         assertEquals(listOf(file.canonicalPath), copies.map { File(it).canonicalPath })
     }
 
+    @Test fun withoutAPlayersCacheAnOrdinaryEpisodeKeepsWhatThePlayerStreams() = runBlocking<Unit> {
+        // The Mac: no player cache to fill, but its relay can complete what it streams into the file.
+        val asked = mutableListOf<String>()
+        val m = newManager(fillPlayerCacheAsFile = { e, source, dest ->
+            asked += "${e.audioUrl} $source"
+            File(dest).writeBytes(payload)
+            payload.size.toLong()
+        })
+        val ep = episode()
+        m.cache(ep)
+        eventually { m.playableUri(ep)?.startsWith("file:") == true }
+        delay(100)
+        assertEquals(listOf("${ep.audioUrl} ${ep.audioUrl}"), asked)
+        assertEquals(0, requests.size)
+        assertContentEquals(payload, File(URI(assertNotNull(m.playableUri(ep)))).readBytes())
+    }
+
     @Test fun aYoutubeEpisodeTheFillCantTakeIsFetchedAsAFile() = runBlocking<Unit> {
-        val m = newManager(locate = { it + "&resolved=1" }, fillPlayerCacheAsFile = { _, _ -> null })
+        val m = newManager(locate = { it + "&resolved=1" }, fillPlayerCacheAsFile = { _, _, _ -> null })
         val ep = episode()
         m.cache(ep)
         eventually { m.playableUri(ep)?.startsWith("file:") == true }

@@ -111,6 +111,28 @@ class StreamRelayPlayheadTest {
         reader.join(2_000)
     }
 
+    @Test fun cachingWhilePlayingCompletesTheRelayedFileAndKeepsIt() = kotlinx.coroutines.runBlocking {
+        val url = assertNotNull(StreamRelay.relayOrNull(remote, "mp3", episode = "https://feed.example/ep1.mp3"))
+        StreamRelay.reportPlayback(url, positionMs = 0, durationMs = 1_000_000)
+        assertContentEquals(payload.copyOfRange(0, mb), get(url, "bytes=0-${mb - 1}"))
+        settle()
+        assertTrue(fetchedBytes() < payload.size, "paced before caching")
+
+        val dest = java.io.File.createTempFile("relay-cache", ".mp3").apply { delete(); deleteOnExit() }
+        assertEquals(payload.size.toLong(), StreamRelay.completeTo("https://feed.example/ep1.mp3", dest))
+        assertContentEquals(payload, dest.readBytes())
+        // One download: what the player streamed and the rest, every byte once.
+        assertEquals(payload.size.toLong(), fetchedBytes(), asked.toString())
+        // And it still plays from the relay, now from what's held.
+        assertContentEquals(payload.copyOfRange(20 * mb, 21 * mb), get(url, "bytes=${20 * mb}-${21 * mb - 1}"))
+    }
+
+    @Test fun cachingAnEpisodeThatIsntRelayedLeavesItToTheCaller() = kotlinx.coroutines.runBlocking {
+        val dest = java.io.File.createTempFile("relay-cache", ".mp3").apply { delete(); deleteOnExit() }
+        assertNull(StreamRelay.completeTo("https://feed.example/not-playing.mp3", dest))
+        assertTrue(!dest.exists())
+    }
+
     @Test fun aServerWithoutRangesIsPlayedDirectly() {
         honorRanges = false
         assertNull(StreamRelay.relayOrNull(remote, "mp3"))
