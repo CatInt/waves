@@ -83,6 +83,68 @@ class OfflineModeTest {
     }
 
     @Test
+    fun evictionDropsThePlayersCopyOfEpisodesStoredAsFilesExceptTheActiveOne() {
+        val plan = evictionPlan(
+            offline = false,
+            removedIds = emptySet(),
+            cache = listOf(full(epA.id, 10), full(epB.id, 10), partial(epC.id, 99_000)),
+            activeEpisodeId = epB.id,
+            nowEpochMs = 100_000,
+            partialGraceMs = 60_000,
+            localCopyIds = setOf(epA.id, epB.id, epC.id),
+        )
+        assertEquals(setOf(epA.id, epC.id), plan.cacheIds)
+        assertEquals(EvictionPlan(), evictionPlan(true, emptySet(), listOf(full(epA.id)), null, 0, localCopyIds = setOf(epA.id)))
+    }
+
+    @Test
+    fun cleanerDropsTheStreamedCopyOnceTheEpisodeIsDownloaded() = runTest {
+        val active = MutableStateFlow<EpisodeId?>(epA.id)
+        val cache = InMemoryPlaybackCache()
+        val downloads = InMemoryDownloadManager(backgroundScope, stepMs = 1, steps = 1, clock = { 1L })
+        val cleaner = LocalMediaCleaner(
+            downloads = downloads,
+            cache = cache,
+            offline = MutableStateFlow(false),
+            activeEpisode = active,
+            scope = backgroundScope,
+            clock = { 10_000 },
+            fileExists = { true },
+        )
+        cache.upsert(full(epA.id))
+        cache.upsert(full(epB.id))
+        cleaner.start()
+        downloads.enqueue(epA)
+        downloads.enqueue(epB)
+        settle()
+        assertEquals(listOf(epA.id), cache.entries.first().map { it.episodeId }, "the playing episode keeps its copy")
+        active.value = null
+        settle()
+        assertTrue(cache.entries.first().isEmpty())
+    }
+
+    @Test
+    fun cleanerKeepsTheStreamedCopyWhenTheDownloadsFileIsGone() = runTest {
+        val cache = InMemoryPlaybackCache()
+        val downloads = InMemoryDownloadManager(backgroundScope, stepMs = 1, steps = 1, clock = { 1L })
+        val cleaner = LocalMediaCleaner(
+            downloads = downloads,
+            cache = cache,
+            offline = MutableStateFlow(false),
+            activeEpisode = MutableStateFlow(null),
+            scope = backgroundScope,
+            clock = { 10_000 },
+            // Deleted outside the app: the download still says Done.
+            fileExists = { false },
+        )
+        cache.upsert(full(epA.id))
+        cleaner.start()
+        downloads.enqueue(epA)
+        settle()
+        assertEquals(listOf(epA.id), cache.entries.first().map { it.episodeId }, "the only copy left stays")
+    }
+
+    @Test
     fun homeListsOnlyLocalEpisodesWhileOfflineAndSkipsRefresh() = runTest {
         val library = InMemoryLibraryRepository()
         library.subscribe(podcastA)

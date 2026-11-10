@@ -58,13 +58,15 @@ fun offlinePlayableIds(
 data class EvictionPlan(
     /** Explicit downloads of episodes that left the feed. */
     val downloadIds: Set<EpisodeId> = emptySet(),
-    /** Playback-cache rows: partials, episodes that left the feed, and fully cached audio over the budget. */
+    /** Playback-cache rows: partials, copies of local files, episodes that left the feed, and fully cached audio over the budget. */
     val cacheIds: Set<EpisodeId> = emptySet(),
 )
 
 /**
  * Online maintenance:
  * - partial cache entries older than [partialGraceMs], except the episode loaded in the player
+ * - cache entries of episodes that have a local file ([localCopyIds]: a download or a cached file), except the
+ *   episode loaded in the player, which drops its own copy once it plays from that file
  * - downloads and cache of episodes removed from a feed, except the one loaded in the player
  * - oldest fully cached audio once the fully cached bytes exceed [fullyCachedBudgetBytes]
  *
@@ -78,6 +80,7 @@ fun evictionPlan(
     nowEpochMs: Long,
     fullyCachedBudgetBytes: Long = DEFAULT_CACHE_BUDGET_BYTES,
     partialGraceMs: Long = DEFAULT_PARTIAL_GRACE_MS,
+    localCopyIds: Set<EpisodeId> = emptySet(),
 ): EvictionPlan {
     if (offline) return EvictionPlan()
     val protected = setOfNotNull(activeEpisodeId)
@@ -85,8 +88,11 @@ fun evictionPlan(
         val age = nowEpochMs - entry.updatedAtEpochMs
         if (!entry.isFullyCached && entry.episodeId !in protected && age >= partialGraceMs) entry.episodeId else null
     }
+    val duplicated = cache.mapNotNullTo(HashSet()) { entry ->
+        entry.episodeId.takeIf { it in localCopyIds && it !in protected }
+    }
     val removed = removedIds - protected
-    val dropping = partial + removed
+    val dropping = partial + duplicated + removed
     val protectedBytes = cache.filter { it.episodeId in protected }.sumOf { it.bytesCached }
     val victims = cache
         .filter { it.isFullyCached && it.episodeId !in dropping && it.episodeId !in protected }

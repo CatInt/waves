@@ -72,13 +72,14 @@ class KtorDownloadManagerTest {
         rangeChunkBytes: Long = 8L * 1024 * 1024,
         copyFromPlayerCache: suspend (Episode, String) -> Long? = { _, _ -> null },
         fillPlayerCache: (suspend (Episode) -> Boolean)? = null,
+        onLocalCopy: (EpisodeId, String) -> Unit = { _, _ -> },
     ): KtorDownloadManager {
         val scope = CoroutineScope(SupervisorJob() + io).also { scopes += it }
         val client = HttpClient(MockEngine { req -> requests += req; handler(req) }) { downloadDefaults() }
         return KtorDownloadManager(
             driver, client, dir.absolutePath, scope, ioContext = io, clock = { now }, progressIntervalMs = 0,
             resumeOnStart = resumeOnStart, locate = locate, rangeChunkBytes = rangeChunkBytes,
-            copyFromPlayerCache = copyFromPlayerCache, fillPlayerCache = fillPlayerCache,
+            copyFromPlayerCache = copyFromPlayerCache, fillPlayerCache = fillPlayerCache, onLocalCopy = onLocalCopy,
         )
     }
 
@@ -479,11 +480,16 @@ class KtorDownloadManagerTest {
     @Test fun youtubeEpisodeIsCachedAsTheResolvedStreamAndAdoptedByDownload() = runBlocking<Unit> {
         val watch = "https://www.youtube.com/watch?v=firstVideo1"
         val source = "https://ts.example/audio/firstVideo1.mp3?key=k"
-        val m = newManager(locate = { if (it == watch) source else it })
+        val copies = Collections.synchronizedList(mutableListOf<Pair<EpisodeId, String>>())
+        val m = newManager(locate = { if (it == watch) source else it }, onLocalCopy = { id, path -> copies += id to path })
         val ep = episode(guid = "firstVideo1", url = watch)
         m.cache(ep)
         eventually { cached(ep, "mp3").exists() }
         assertContentEquals(payload, cached(ep, "mp3").readBytes())
+        // The player streaming it is told where the whole file is, to carry on from it.
+        eventually { copies.isNotEmpty() }
+        assertEquals(ep.id, copies.single().first)
+        assertEquals(cached(ep, "mp3").canonicalFile, File(copies.single().second).canonicalFile)
         assertEquals(source, requests.single().url.toString())
         assertEquals(emptyList(), m.downloads.first())
         assertEquals(cached(ep, "mp3").canonicalFile, File(URI(assertNotNull(m.playableUri(ep)))).canonicalFile)
@@ -494,6 +500,7 @@ class KtorDownloadManagerTest {
         assertTrue(done.filePath.endsWith(".mp3"), done.filePath)
         assertContentEquals(payload, File(done.filePath).readBytes())
         assertEquals(emptyList(), cacheFiles())
+        assertEquals(ep.id to done.filePath, copies.last()) // the cache file moved: the download is the copy now
     }
 
     @Test fun youtubeCachingFailureDiscardsThePartialStream() = runBlocking<Unit> {

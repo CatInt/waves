@@ -44,6 +44,8 @@ fun createDownloadManager(
             },
             // Caching while listening completes the player's own copy instead of fetching a second one.
             fillPlayerCache = PlaybackCacheBridge::fill,
+            // A YouTube episode is cached as a file, beside what the player streams: once it's whole, play from it.
+            onLocalCopy = PlaybackCacheBridge::onLocalCopy,
         )
     }
 

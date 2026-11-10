@@ -91,6 +91,8 @@ class KtorDownloadManager(
      * are always cached as files: playing them from the player's cache needs the network to resolve them again.
      */
     private val fillPlayerCache: (suspend (Episode) -> Boolean)? = null,
+    /** Told the path of each complete local copy (download or cache file) as it appears, so a player can switch to it. */
+    private val onLocalCopy: (EpisodeId, String) -> Unit = { _, _ -> },
 ) : DownloadManager {
 
     private val db = WavesDatabase(driver)
@@ -147,6 +149,7 @@ class KtorDownloadManager(
                             size, size, file, null, now, now, now,
                         )
                         doneCache.update { it + (id to file) }
+                        onLocalCopy(id, file)
                         false
                     }
                     row.needsTransfer() -> {
@@ -265,6 +268,7 @@ class KtorDownloadManager(
                     permits.withPermit { transfer(source, path, discardPartial = resolved) { _, _ -> } }
                     stamp(key)
                     rememberCached(key, episode)
+                    onLocalCopy(id, path)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (_: Throwable) {
@@ -485,6 +489,7 @@ class KtorDownloadManager(
             }
             queries.markDone(size, clock(), id.feedUrl, id.guid)
             doneCache.update { it + (id to path) }
+            onLocalCopy(id, path)
             DownloadStatus.Done
         } catch (e: CancellationException) {
             throw e
