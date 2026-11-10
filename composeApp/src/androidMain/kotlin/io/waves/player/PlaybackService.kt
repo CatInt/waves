@@ -56,7 +56,7 @@ class PlaybackService : MediaSessionService() {
         val player = ExoPlayer.Builder(this)
             .setMediaSourceFactory(
                 caching?.mediaSourceFactory
-                    ?: androidx.media3.datasource.DefaultDataSource.Factory(this, httpFactory).let { sources ->
+                    ?: androidx.media3.datasource.DefaultDataSource.Factory(this, RangedHttpDataSource.Factory(httpFactory)).let { sources ->
                         HlsTolerantMediaSourceFactory(androidx.media3.exoplayer.source.DefaultMediaSourceFactory(sources), sources)
                     },
             )
