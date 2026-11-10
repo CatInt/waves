@@ -64,12 +64,7 @@ internal fun MenuBar(
     if (!menuBarSupported) return
     var popover by remember { mutableStateOf<WindowPosition?>(null) }
     val dismissedAt = remember { longArrayOf(0L) }
-    val tray = remember {
-        TrayIcon(MenuBarPill.image(PillContent(dev = DevBuild))).apply {
-            isImageAutoSize = false
-            toolTip = if (DevBuild) "Waves (development build)" else "Waves"
-        }
-    }
+    val tray = remember { MenuBarTray.icon }
 
     DisposableEffect(tray) {
         val listener = object : MouseAdapter() {
@@ -82,7 +77,7 @@ internal fun MenuBar(
             }
         }
         tray.addMouseListener(listener)
-        SystemTray.getSystemTray().add(tray)
+        MenuBarTray.show()
         onDispose {
             tray.removeMouseListener(listener)
             SystemTray.getSystemTray().remove(tray)
@@ -140,6 +135,35 @@ internal fun MenuBar(
                 }
             }
         }
+    }
+}
+
+/**
+ * The menu bar item: the cover pill, and where new-episode banners are posted from, so Waves keeps a single item in
+ * the menu bar. Touch on the AWT event thread.
+ */
+internal object MenuBarTray {
+    val icon: TrayIcon by lazy {
+        TrayIcon(MenuBarPill.image(PillContent(dev = DevBuild))).apply {
+            isImageAutoSize = false
+            toolTip = if (DevBuild) "Waves (development build)" else "Waves"
+        }
+    }
+
+    /** Puts the item in the menu bar if it isn't there yet. */
+    fun show() {
+        val tray = SystemTray.getSystemTray()
+        if (icon !in tray.trayIcons) tray.add(icon)
+    }
+
+    /**
+     * The item to post a banner from, put up first if a banner comes before the item does (a refresh finding new
+     * episodes as the app starts); null off macOS, where Waves has no menu bar item.
+     */
+    fun forBanners(): TrayIcon? {
+        if (!menuBarSupported) return null
+        show()
+        return icon
     }
 }
 

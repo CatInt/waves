@@ -18,11 +18,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.withContext
 import java.awt.EventQueue
-import java.awt.GraphicsEnvironment
-import java.awt.RenderingHints
-import java.awt.SystemTray
 import java.awt.TrayIcon
-import java.awt.image.BufferedImage
 import java.io.File
 import java.util.Properties
 import kotlin.time.Duration
@@ -64,7 +60,7 @@ object DesktopRefresh {
         library: LibraryRepository,
         scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
         refresher: FeedRefresher = createRefresher(library),
-        notifier: RefreshNotifier? = TrayRefreshNotifier.createOrNull(),
+        notifier: RefreshNotifier? = null,
         period: Duration = 1.hours,
         enabled: Flow<Boolean> = flowOf(true),
         initiallyEnabled: Boolean = true,
@@ -105,21 +101,16 @@ class PropertiesRefreshStateStore(private val file: File) : RefreshStateStore {
 }
 
 /**
- * Desktop notification through the AWT system tray (macOS shows these as Notification Center banners).
- * The tray icon is only added the first time there is something to announce.
+ * Desktop notification through the AWT system tray (macOS shows these as Notification Center banners), posted from
+ * the menu bar item [icon] hands over (the cover pill), so Waves keeps a single item in the menu bar. With no item to
+ * post from (null), there is no banner.
  */
-class TrayRefreshNotifier private constructor() : RefreshNotifier {
-    private var icon: TrayIcon? = null
-
+class TrayRefreshNotifier(private val icon: () -> TrayIcon?) : RefreshNotifier {
     override fun notifyNewEpisodes(updates: List<PodcastUpdate>) {
         if (updates.isEmpty()) return
         EventQueue.invokeLater {
             runCatching {
-                val tray = icon ?: TrayIcon(appImage(), "Waves").also {
-                    it.isImageAutoSize = true
-                    SystemTray.getSystemTray().add(it)
-                    icon = it
-                }
+                val tray = icon() ?: return@runCatching
                 if (updates.size > MAX_INDIVIDUAL) {
                     tray.displayMessage("New episodes", RefreshText.summary(updates), TrayIcon.MessageType.INFO)
                 } else {
@@ -131,25 +122,7 @@ class TrayRefreshNotifier private constructor() : RefreshNotifier {
         }
     }
 
-    companion object {
-        private const val MAX_INDIVIDUAL = 3
-
-        /** Null when there is no display or the platform has no system tray. */
-        fun createOrNull(): TrayRefreshNotifier? = try {
-            if (GraphicsEnvironment.isHeadless() || !SystemTray.isSupported()) null else TrayRefreshNotifier()
-        } catch (_: Throwable) {
-            null
-        }
-
-        private fun appImage(): BufferedImage {
-            val size = 32
-            return BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB).apply {
-                val g = createGraphics()
-                g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-                g.color = java.awt.Color(0x6750A4)
-                g.fillOval(2, 2, size - 4, size - 4)
-                g.dispose()
-            }
-        }
+    private companion object {
+        const val MAX_INDIVIDUAL = 3
     }
 }

@@ -69,7 +69,8 @@ fun main() {
     val refresh = DesktopRefresh.start(
         graph.library,
         refresher = refresher,
-        notifier = TrayRefreshNotifier.createOrNull()?.except {
+        // Banners come from the menu bar item, the cover pill.
+        notifier = TrayRefreshNotifier(MenuBarTray::forBanners).except {
             silencedShows.value.values.filterNot { it.notify }.mapTo(HashSet()) { it.feedUrl }
         },
         enabled = graph.offline.map { !it },
