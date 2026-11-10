@@ -34,4 +34,28 @@ class SqlLibraryRepositoryConcurrencyTest {
         dir.deleteRecursively()
         Unit
     }
+
+    /**
+     * Writers that don't share the repository's lock (the download manager, the playback cache, settings, on the
+     * same database): a read-then-write transaction must wait for the other's write, not fail at once.
+     */
+    @Test
+    fun writersOutsideTheRepositorysLockDoNotFailWithBusy() = runBlocking {
+        val dir = Files.createTempDirectory("waves-db").toFile()
+        val driver = createDesktopDriver(dir.resolve("waves.db"))
+        val repos = listOf(SqlLibraryRepository(driver, Dispatchers.IO), SqlLibraryRepository(driver, Dispatchers.IO))
+        val ids = (0 until 8).map { EpisodeId("https://a/feed", "g$it") }
+        val jobs = (0 until 8).map { worker ->
+            async(Dispatchers.IO) {
+                repeat(150) { n ->
+                    val p = PlaybackProgress(ids[worker], positionMs = n.toLong(), durationMs = 1000, updatedAtEpochMs = n.toLong())
+                    repos[worker % 2].saveProgress(p)
+                }
+            }
+        }
+        jobs.awaitAll()
+        assertEquals(8, repos[0].exportSyncState().progress.size)
+        dir.deleteRecursively()
+        Unit
+    }
 }

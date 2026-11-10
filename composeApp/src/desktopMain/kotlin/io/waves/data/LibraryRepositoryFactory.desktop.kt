@@ -4,7 +4,6 @@ import app.cash.sqldelight.TransacterImpl
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlSchema
-import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import io.waves.data.db.WavesDatabase
 import java.io.File
 import java.util.Properties
@@ -38,11 +37,12 @@ fun appDataDirectory(release: Boolean = io.waves.BuildInfo.IS_RELEASE): File {
  * - synchronous=NORMAL: the recommended pairing with WAL (durable across app crashes; a power loss can
  *   only lose the last commits, never corrupt the file).
  * - busy_timeout: a second connection waits for a lock instead of failing immediately with SQLITE_BUSY.
+ * - Transactions that take the write lock as they begin ([ImmediateSqliteDriver]), so a second writer waits too.
  * - foreign_keys: enforced if the schema ever declares any.
  */
 internal fun createDesktopDriver(file: File): SqlDriver {
     file.parentFile?.mkdirs()
-    val driver = JdbcSqliteDriver(
+    val driver = ImmediateSqliteDriver(
         url = "jdbc:sqlite:${file.absolutePath}",
         properties = Properties().apply {
             put("journal_mode", "WAL")
