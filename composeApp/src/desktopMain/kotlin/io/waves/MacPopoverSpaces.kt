@@ -62,6 +62,10 @@ internal object MacPopoverSpaces {
                             val window = ObjC.send(windows, "objectAtIndex:", i)
                             if (ObjC.stringValue(ObjC.send(window, "title")) != title) continue
                             ObjC.send(window, "setStyleMask:", ObjC.sendLong(window, "styleMask") or NONACTIVATING_PANEL)
+                            // After the style change a white rounded window background showed behind the popover's
+                            // own; setting the see-through background again keeps it away.
+                            ObjC.send(window, "setOpaque:", 0)
+                            ObjC.send(window, "setBackgroundColor:", ObjC.send(ObjC.cls("NSColor"), "clearColor"))
                             // The style alone doesn't reach the window server once the window exists.
                             if (ObjC.sendLong(window, "respondsToSelector:", ObjC.sel("_setPreventsActivation:")) and 0xff != 0L) {
                                 ObjC.send(window, "_setPreventsActivation:", 1)
