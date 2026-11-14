@@ -8,13 +8,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.awt.ComposeWindow
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
-import androidx.compose.ui.window.WindowPosition
-import androidx.compose.ui.window.rememberWindowState
 import io.waves.player.CoverArt
 import io.waves.ui.AppState
 import io.waves.ui.LocalWheelGesture
@@ -41,6 +40,8 @@ import java.awt.event.WindowEvent
 
 private val PanelSize = DpSize(380.dp, 600.dp)
 private const val PANEL_GAP = 6
+/** Unseen (the popover has no title bar), but how [MacPopoverSpaces] finds its window. */
+private const val POPOVER_TITLE = "Waves menu"
 /** A tray click that also took focus from the panel closes it; this keeps that same click from reopening it. */
 private const val REOPEN_GUARD_MS = 300L
 
@@ -62,7 +63,7 @@ internal fun MenuBar(
     wheelGesture: StateFlow<WheelGesture>? = null,
 ) {
     if (!menuBarSupported) return
-    var popover by remember { mutableStateOf<WindowPosition?>(null) }
+    var popover by remember { mutableStateOf<Point?>(null) }
     val dismissedAt = remember { longArrayOf(0L) }
     val tray = remember { MenuBarTray.icon }
 
@@ -96,16 +97,11 @@ internal fun MenuBar(
 
     popover?.let { position ->
         Window(
-            onCloseRequest = { popover = null },
-            state = rememberWindowState(position = position, size = PanelSize),
-            title = "Waves",
-            undecorated = true,
-            transparent = true,
-            resizable = false,
-            alwaysOnTop = true,
             onKeyEvent = { event ->
                 (event.key == Key.Escape).also { if (it) popover = null }
             },
+            create = { popoverWindow(position, onClose = { popover = null }) },
+            dispose = ComposeWindow::dispose,
         ) {
             DisposableEffect(window) {
                 val focus = object : WindowAdapter() {
@@ -115,9 +111,15 @@ internal fun MenuBar(
                     }
                 }
                 window.addWindowFocusListener(focus)
-                window.toFront()
-                window.requestFocus()
-                onDispose { window.removeWindowFocusListener(focus) }
+                // Like the system's dropdowns, it goes when the user moves to another desktop or full-screen app.
+                MacPopoverSpaces.onSpaceChanged = { popover = null }
+                // In front over whatever Space is showing, a full-screen app's too, without making Waves the active
+                // app (AWT's toFront would, and macOS would follow it to Waves' desktop).
+                MacPopoverSpaces.show(POPOVER_TITLE)
+                onDispose {
+                    window.removeWindowFocusListener(focus)
+                    MacPopoverSpaces.onSpaceChanged = null
+                }
             }
             WavesTheme(app.artworkColors) {
                 CompositionLocalProvider(LocalWheelGesture provides (wheelGesture ?: NoWheelGesture)) {
@@ -168,17 +170,35 @@ internal object MenuBarTray {
 }
 
 /** Below the menu bar, centred on the click and kept on the clicked screen. */
-private fun panelPosition(click: Point): WindowPosition {
+private fun panelPosition(click: Point): Point {
     val config = GraphicsEnvironment.getLocalGraphicsEnvironment().screenDevices
         .map { it.defaultConfiguration }
         .firstOrNull { it.bounds.contains(click) }
     val width = PanelSize.width.value.toInt()
-    if (config == null) return WindowPosition((click.x - width / 2).dp, (click.y + PANEL_GAP).dp)
+    if (config == null) return Point(click.x - width / 2, click.y + PANEL_GAP)
     val bounds = config.bounds
     val insets = java.awt.Toolkit.getDefaultToolkit().getScreenInsets(config)
     val x = (click.x - width / 2).coerceIn(bounds.x + PANEL_GAP, bounds.x + bounds.width - width - PANEL_GAP)
     val y = bounds.y + insets.top + PANEL_GAP
-    return WindowPosition(x.dp, y.dp)
+    return Point(x, y)
+}
+
+/**
+ * The popover's window: a utility window, which AWT makes an NSPanel, the kind of window that can show over a
+ * full-screen app (see [MacPopoverSpaces]). Built by hand, as the window type must be set before AWT creates it.
+ */
+private fun popoverWindow(position: Point, onClose: () -> Unit) = ComposeWindow().apply {
+    type = java.awt.Window.Type.UTILITY
+    title = POPOVER_TITLE
+    isUndecorated = true
+    isTransparent = true
+    isResizable = false
+    isAlwaysOnTop = true
+    setBounds(position.x, position.y, PanelSize.width.value.toInt(), PanelSize.height.value.toInt())
+    defaultCloseOperation = javax.swing.WindowConstants.DO_NOTHING_ON_CLOSE
+    addWindowListener(object : WindowAdapter() {
+        override fun windowClosing(e: WindowEvent) = onClose()
+    })
 }
 
 /** Off macOS, or before AppKit says: wheel events alone, as for a mouse. */
